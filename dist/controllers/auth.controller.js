@@ -350,5 +350,123 @@ class AuthController {
             next(error);
         }
     }
+    static async updateProfile(req, res, next) {
+        try {
+            if (!req.user) {
+                return res.status(401).json({
+                    success: false,
+                    error: { code: 'AUTH_REQUIRED', message: 'Authentication required' },
+                });
+            }
+            const { firstName, lastName, email, phone, title, bio, hourlyRate, languages } = req.body;
+            await prisma_1.prisma.user.update({
+                where: { id: req.user.id },
+                data: {
+                    ...(firstName ? { firstName: String(firstName).trim() } : {}),
+                    ...(lastName !== undefined ? { lastName: String(lastName).trim() } : {}),
+                    ...(email ? { email: String(email).trim().toLowerCase() } : {}),
+                    ...(phone ? { phone: String(phone).trim() } : {}),
+                },
+            });
+            // If professional profile exists and fields provided, update them
+            const user = await prisma_1.prisma.user.findUnique({
+                where: { id: req.user.id },
+                include: {
+                    roles: { include: { role: true } },
+                    customerProfile: true,
+                    professionalProfile: {
+                        include: { creditWallet: true, verification: true },
+                    },
+                },
+            });
+            if (user?.professionalProfile && (title !== undefined || bio !== undefined || hourlyRate !== undefined || languages !== undefined)) {
+                await prisma_1.prisma.professionalProfile.update({
+                    where: { userId: req.user.id },
+                    data: {
+                        ...(title !== undefined ? { title: String(title).trim() } : {}),
+                        ...(bio !== undefined ? { bio: String(bio).trim() } : {}),
+                        ...(hourlyRate !== undefined ? { hourlyRate: Number(hourlyRate) } : {}),
+                        ...(languages !== undefined ? { languages: String(languages).trim() } : {}),
+                    },
+                });
+            }
+            const refreshed = await prisma_1.prisma.user.findUnique({
+                where: { id: req.user.id },
+                include: {
+                    roles: { include: { role: true } },
+                    customerProfile: true,
+                    professionalProfile: {
+                        include: { creditWallet: true, verification: true },
+                    },
+                },
+            });
+            return res.status(200).json({
+                success: true,
+                message: 'Profile updated successfully',
+                data: {
+                    user: {
+                        id: refreshed.id,
+                        email: refreshed.email,
+                        phone: refreshed.phone,
+                        firstName: refreshed.firstName,
+                        lastName: refreshed.lastName,
+                        roles: refreshed.roles.map((r) => r.role.name),
+                        customerProfile: refreshed.customerProfile,
+                        professionalProfile: refreshed.professionalProfile,
+                    },
+                },
+            });
+        }
+        catch (error) {
+            next(error);
+        }
+    }
+    static async changePassword(req, res, next) {
+        try {
+            if (!req.user) {
+                return res.status(401).json({
+                    success: false,
+                    error: { code: 'AUTH_REQUIRED', message: 'Authentication required' },
+                });
+            }
+            const { currentPassword, newPassword } = req.body;
+            if (!newPassword || newPassword.length < 6) {
+                return res.status(400).json({
+                    success: false,
+                    error: { code: 'INVALID_PASSWORD', message: 'New password must be at least 6 characters long.' },
+                });
+            }
+            const user = await prisma_1.prisma.user.findUnique({
+                where: { id: req.user.id },
+            });
+            if (!user) {
+                return res.status(404).json({
+                    success: false,
+                    error: { code: 'USER_NOT_FOUND', message: 'User not found.' },
+                });
+            }
+            if (user.passwordHash && currentPassword) {
+                const matches = await bcryptjs_1.default.compare(currentPassword, user.passwordHash);
+                if (!matches) {
+                    return res.status(400).json({
+                        success: false,
+                        error: { code: 'INCORRECT_PASSWORD', message: 'Current password does not match.' },
+                    });
+                }
+            }
+            const newHash = await bcryptjs_1.default.hash(newPassword, 10);
+            await prisma_1.prisma.user.update({
+                where: { id: user.id },
+                data: { passwordHash: newHash },
+            });
+            return res.status(200).json({
+                success: true,
+                message: 'Password updated successfully.',
+            });
+        }
+        catch (error) {
+            next(error);
+        }
+    }
 }
 exports.AuthController = AuthController;

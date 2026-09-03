@@ -9,4 +9,6 @@ router.post('/otp/verify', auth_controller_1.AuthController.verifyOtp);
 router.post('/login', auth_controller_1.AuthController.login);
 router.post('/register', auth_controller_1.AuthController.register);
 router.get('/me', auth_middleware_1.authenticate, auth_controller_1.AuthController.getMe);
+router.put('/profile', auth_middleware_1.authenticate, auth_controller_1.AuthController.updateProfile);
+router.put('/password', auth_middleware_1.authenticate, auth_controller_1.AuthController.changePassword);
 exports.default = router;
