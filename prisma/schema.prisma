@@ -1,0 +1,1094 @@
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// ---------------------------------------------------------
+// 1. Identity & Role-Based Access Control (RBAC)
+// ---------------------------------------------------------
+
+model User {
+  id                String       @id @default(uuid())
+  email             String?      @unique
+  phone             String?      @unique
+  phoneCountryCode  String       @default("+91")
+  passwordHash      String?
+  firstName         String
+  lastName          String
+  status            String       @default("ACTIVE") // ACTIVE, INACTIVE, SUSPENDED, PENDING_VERIFICATION
+  emailVerifiedAt   DateTime?
+  phoneVerifiedAt   DateTime?
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+  deletedAt         DateTime?
+
+  roles             UserRole[]
+  refreshTokens     RefreshToken[]
+  customerProfile   CustomerProfile?
+  professionalProfile ProfessionalProfile?
+  notifications     Notification[]
+  notificationPref  NotificationPreference?
+  messagesSent      Message[]    @relation("UserMessages")
+  chatParticipants  ChatParticipant[]
+  statusChanges     JobStatusHistory[] @relation("StatusChanger")
+  disputesRaised    Dispute[]    @relation("DisputeRaiser")
+  evidences         DisputeEvidence[] @relation("EvidenceSubmitter")
+  auditLogs         AuditLog[]   @relation("UserAuditLogs")
+  systemSettingsUpdated SystemSetting[] @relation("SettingUpdater")
+  shortlists        Shortlist[]
+
+  @@index([email])
+  @@index([phone])
+}
+
+model Role {
+  id          String           @id @default(uuid())
+  name        String           @unique // CUSTOMER, PROFESSIONAL, ADMIN, SUPER_ADMIN, SUPPORT, FINANCE, VERIFICATION_ADMIN
+  description String?
+  userRoles   UserRole[]
+  permissions RolePermission[]
+}
+
+model Permission {
+  id          String           @id @default(uuid())
+  slug        String           @unique // e.g., requirements:create, jobs:hire
+  name        String
+  description String?
+  roles       RolePermission[]
+}
+
+model RolePermission {
+  id           String     @id @default(uuid())
+  roleId       String
+  permissionId String
+  role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@unique([roleId, permissionId])
+}
+
+model UserRole {
+  id        String   @id @default(uuid())
+  userId    String
+  roleId    String
+  createdAt DateTime @default(now())
+
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role      Role     @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, roleId])
+  @@index([userId])
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid())
+  userId    String
+  tokenHash String   @unique
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime @default(now())
+
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model OtpVerification {
+  id          String   @id @default(uuid())
+  phone       String
+  otpHash     String
+  attempts    Int      @default(0)
+  maxAttempts Int      @default(3)
+  isUsed      Boolean  @default(false)
+  expiresAt   DateTime
+  createdAt   DateTime @default(now())
+
+  @@index([phone])
+}
+
+// ---------------------------------------------------------
+// 2. Profiles & Verification
+// ---------------------------------------------------------
+
+model CustomerProfile {
+  id                 String       @id @default(uuid())
+  userId             String       @unique
+  cityId             String?
+  areaId             String?
+  pincodeId          String?
+  addressLine1       String?
+  addressLine2       String?
+  trustScore         Float        @default(100.0)
+  jobsPostedCount    Int          @default(0)
+  jobsCompletedCount Int          @default(0)
+  createdAt          DateTime     @default(now())
+  updatedAt          DateTime     @updatedAt
+
+  user               User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  city               City?        @relation(fields: [cityId], references: [id])
+  area               Area?        @relation(fields: [areaId], references: [id])
+  pincode            Pincode?     @relation(fields: [pincodeId], references: [id])
+  requirements       Requirement[]
+  jobs               Job[]
+  reviewsWritten     Review[]
+}
+
+model ProfessionalProfile {
+  id                   String       @id @default(uuid())
+  userId               String       @unique
+  title                String?
+  bio                  String?
+  yearsOfExperience    Int          @default(0)
+  hourlyRate           Float        @default(0)
+  currency             String       @default("INR")
+  languages            String?
+  rating               Float        @default(0.0)
+  reviewsCount         Int          @default(0)
+  completedJobsCount   Int          @default(0)
+  responseRatePercentage Float      @default(100.0)
+  avatarUrl            String?
+  isFeatured           Boolean      @default(false)
+  isVerified           Boolean      @default(false)
+  createdAt            DateTime     @default(now())
+  updatedAt            DateTime     @updatedAt
+
+  user                 User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  skills               ProfessionalSkill[]
+  serviceAreas         ServiceArea[]
+  verification         Verification?
+  creditWallet         CreditWallet?
+  applications         Application[]
+  quotations           Quotation[]
+  jobs                 Job[]
+  reviewsReceived      Review[]
+  promotions           Promotion[]
+  payouts              ProfessionalPayout[]
+  shortlists           Shortlist[]
+}
+
+model Verification {
+  id                   String       @id @default(uuid())
+  professionalProfileId String      @unique
+  status               String       @default("NOT_STARTED") // NOT_STARTED, PENDING, VERIFIED, FAILED, REVIEW_REQUIRED, EXPIRED
+  provider             String       @default("DIGILOCKER") // DIGILOCKER, MANUAL
+  referenceId          String?
+  verifiedAt           DateTime?
+  rejectionReason      String?
+  createdAt            DateTime     @default(now())
+  updatedAt            DateTime     @updatedAt
+
+  professional         ProfessionalProfile @relation(fields: [professionalProfileId], references: [id], onDelete: Cascade)
+}
+
+// ---------------------------------------------------------
+// 3. Indian Location Architecture (State -> City -> Area -> Pincode)
+// ---------------------------------------------------------
+
+model State {
+  id        String   @id @default(uuid())
+  name      String   @unique
+  code      String   @unique // e.g., KA, MH, DL
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  cities    City[]
+  requirements Requirement[]
+}
+
+model City {
+  id        String   @id @default(uuid())
+  stateId   String
+  name      String
+  slug      String   @unique
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  state     State    @relation(fields: [stateId], references: [id], onDelete: Cascade)
+  areas     Area[]
+  customerProfiles CustomerProfile[]
+  requirements Requirement[]
+
+  @@index([stateId])
+}
+
+model Area {
+  id        String   @id @default(uuid())
+  cityId    String
+  name      String
+  locality  String?
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  city      City     @relation(fields: [cityId], references: [id], onDelete: Cascade)
+  pincodes  Pincode[]
+  customerProfiles CustomerProfile[]
+  serviceAreas ServiceArea[]
+  requirements Requirement[]
+
+  @@index([cityId])
+}
+
+model Pincode {
+  id        String   @id @default(uuid())
+  areaId    String
+  pincode   String   @unique // 6-digit Indian PIN
+  latitude  Float?
+  longitude Float?
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  area      Area     @relation(fields: [areaId], references: [id], onDelete: Cascade)
+  customerProfiles CustomerProfile[]
+  serviceAreas ServiceArea[]
+  requirements Requirement[]
+
+  @@index([pincode])
+  @@index([areaId])
+}
+
+model ServiceArea {
+  id                   String   @id @default(uuid())
+  professionalProfileId String
+  areaId               String?
+  pincodeId            String?
+  radiusKm             Float    @default(10.0)
+  isActive             Boolean  @default(true)
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  professional         ProfessionalProfile @relation(fields: [professionalProfileId], references: [id], onDelete: Cascade)
+  area                 Area?    @relation(fields: [areaId], references: [id])
+  pincode              Pincode? @relation(fields: [pincodeId], references: [id])
+
+  @@index([professionalProfileId])
+  @@index([pincodeId])
+}
+
+// ---------------------------------------------------------
+// 4. Categories, Subcategories & Skills
+// ---------------------------------------------------------
+
+model Category {
+  id            String        @id @default(uuid())
+  name          String        @unique
+  slug          String        @unique
+  description   String?
+  icon          String?
+  isActive      Boolean       @default(true)
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  subcategories Subcategory[]
+  requirements  Requirement[]
+}
+
+model Subcategory {
+  id          String        @id @default(uuid())
+  categoryId  String
+  name        String
+  slug        String        @unique
+  description String?
+  isActive    Boolean       @default(true)
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  category    Category      @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  requirements Requirement[]
+
+  @@index([categoryId])
+}
+
+model Skill {
+  id            String              @id @default(uuid())
+  name          String              @unique
+  description   String?
+  createdAt     DateTime            @default(now())
+
+  professionals ProfessionalSkill[]
+}
+
+model ProfessionalSkill {
+  id                    String              @id @default(uuid())
+  professionalProfileId String
+  skillId               String
+  yearsOfExperience     Int                 @default(1)
+
+  professional          ProfessionalProfile @relation(fields: [professionalProfileId], references: [id], onDelete: Cascade)
+  skill                 Skill               @relation(fields: [skillId], references: [id], onDelete: Cascade)
+
+  @@unique([professionalProfileId, skillId])
+  @@index([professionalProfileId])
+}
+
+// ---------------------------------------------------------
+// 5. Requirements, Applications, Quotations & Shortlists
+// ---------------------------------------------------------
+
+model Requirement {
+  id                    String       @id @default(uuid())
+  customerId            String
+  categoryId            String
+  subcategoryId         String
+  stateId               String?
+  cityId                String?
+  areaId                String?
+  pincodeId             String?
+  title                 String
+  description           String
+  budgetType            String       @default("FIXED") // FIXED, RANGE
+  budgetMin             Float
+  budgetMax             Float?
+  currency              String       @default("INR")
+  preferredDate         DateTime?
+  preferredTime         String?
+  timeline              String?
+  frequency             String?      @default("ONE_TIME") // ONE_TIME, DAILY, WEEKLY, MONTHLY
+  experienceRequirement String?
+  genderPreference      String?      @default("NO_PREFERENCE") // MALE, FEMALE, NO_PREFERENCE
+  specialInstructions   String?
+  status                String       @default("PUBLISHED") // DRAFT, PUBLISHED, RECEIVING_QUOTES, SHORTLISTED, PROFESSIONAL_SELECTED, HIRED, IN_PROGRESS, COMPLETED, CANCELLED, EXPIRED, DISPUTED, CLOSED
+  createdAt             DateTime     @default(now())
+  updatedAt             DateTime     @updatedAt
+
+  customer              CustomerProfile @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  category              Category        @relation(fields: [categoryId], references: [id])
+  subcategory           Subcategory     @relation(fields: [subcategoryId], references: [id])
+  state                 State?          @relation(fields: [stateId], references: [id])
+  city                  City?           @relation(fields: [cityId], references: [id])
+  area                  Area?           @relation(fields: [areaId], references: [id])
+  pincode               Pincode?        @relation(fields: [pincodeId], references: [id])
+
+  attachments           RequirementAttachment[]
+  applications          Application[]
+  quotations            Quotation[]
+  shortlists            Shortlist[]
+  jobs                  Job[]
+  chatThreads           ChatThread[]
+  callSessions          CallSession[]
+
+  @@index([customerId])
+  @@index([categoryId])
+  @@index([subcategoryId])
+  @@index([status])
+}
+
+model RequirementAttachment {
+  id            String      @id @default(uuid())
+  requirementId String
+  fileUrl       String
+  fileType      String?
+  fileSize      Int?
+  createdAt     DateTime    @default(now())
+
+  requirement   Requirement @relation(fields: [requirementId], references: [id], onDelete: Cascade)
+
+  @@index([requirementId])
+}
+
+model Application {
+  id                    String              @id @default(uuid())
+  requirementId         String
+  professionalProfileId String
+  creditsSpent          Int                 @default(0)
+  aiMatchScore          Float?
+  status                String              @default("SUBMITTED") // SUBMITTED, SHORTLISTED, HIRED, REJECTED, WITHDRAWN
+  createdAt             DateTime            @default(now())
+  updatedAt             DateTime            @updatedAt
+
+  requirement           Requirement         @relation(fields: [requirementId], references: [id], onDelete: Cascade)
+  professional          ProfessionalProfile @relation(fields: [professionalProfileId], references: [id], onDelete: Cascade)
+  quotations            Quotation[]
+
+  @@unique([requirementId, professionalProfileId])
+  @@index([requirementId])
+  @@index([professionalProfileId])
+}
+
+model Quotation {
+  id                    String              @id @default(uuid())
+  applicationId         String?
+  requirementId         String
+  professionalProfileId String
+  proposedPrice         Float
+  currency              String              @default("INR")
+  estimatedTimeline     String
+  proposedStartDate     DateTime?
+  message               String?
+  scopeSummary          String?
+  additionalCharges     Float               @default(0.0)
+  status                String              @default("SUBMITTED") // DRAFT, SUBMITTED, VIEWED, SHORTLISTED, REJECTED, ACCEPTED, WITHDRAWN, EXPIRED
+  createdAt             DateTime            @default(now())
+  updatedAt             DateTime            @updatedAt
+
+  application           Application?        @relation(fields: [applicationId], references: [id], onDelete: SetNull)
+  requirement           Requirement         @relation(fields: [requirementId], references: [id], onDelete: Cascade)
+  professional          ProfessionalProfile @relation(fields: [professionalProfileId], references: [id], onDelete: Cascade)
+  milestones            Milestone[]
+  job                   Job?
+
+  @@index([requirementId])
+  @@index([professionalProfileId])
+  @@index([status])
+}
+
+model Shortlist {
+  id                    String              @id @default(uuid())
+  requirementId         String
+  professionalProfileId String
+  userId                String              // Customer user ID
+  notes                 String?
+  createdAt             DateTime            @default(now())
+
+  requirement           Requirement         @relation(fields: [requirementId], references: [id], onDelete: Cascade)
+  professional          ProfessionalProfile @relation(fields: [professionalProfileId], references: [id], onDelete: Cascade)
+  user                  User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([requirementId, professionalProfileId])
+  @@index([requirementId])
+}
+
+// ---------------------------------------------------------
+// 6. Job Lifecycle, Milestones & Status History
+// ---------------------------------------------------------
+
+model Job {
+  id                       String              @id @default(uuid())
+  requirementId            String
+  quotationId              String              @unique
+  customerId               String
+  professionalProfileId    String
+  agreedPrice              Float
+  currency                 String              @default("INR")
+  status                   String              @default("HIRED") // HIRED, SCHEDULED, PREPARING, ON_THE_WAY, ARRIVED, SERVICE_STARTED, SERVICE_COMPLETED, CUSTOMER_APPROVED, PAYMENT_RELEASED, CANCELLED, DISPUTED, CLOSED
+  paymentProtectionEnabled Boolean             @default(false)
+  scheduledStartTime       DateTime?
+  scheduledEndTime         DateTime?
+  actualStartTime          DateTime?
+  actualEndTime            DateTime?
+  createdAt                DateTime            @default(now())
+  updatedAt                DateTime            @updatedAt
+
+  requirement              Requirement         @relation(fields: [requirementId], references: [id])
+  quotation                Quotation           @relation(fields: [quotationId], references: [id])
+  customer                 CustomerProfile     @relation(fields: [customerId], references: [id])
+  professional             ProfessionalProfile @relation(fields: [professionalProfileId], references: [id])
+
+  statusHistory            JobStatusHistory[]
+  payments                 Payment[]
+  paymentProtection        PaymentProtection?
+  chatThread               ChatThread?
+  callSessions             CallSession[]
+  review                   Review?
+  disputes                 Dispute[]
+  invoices                 Invoice[]
+
+  @@index([requirementId])
+  @@index([customerId])
+  @@index([professionalProfileId])
+  @@index([status])
+}
+
+model JobStatusHistory {
+  id              String   @id @default(uuid())
+  jobId           String
+  previousStatus  String?
+  newStatus       String
+  changedByUserId String?
+  reason          String?
+  metadata        String?  // JSON string
+  createdAt       DateTime @default(now())
+
+  job             Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  changedBy       User?    @relation("StatusChanger", fields: [changedByUserId], references: [id])
+
+  @@index([jobId])
+}
+
+model Milestone {
+  id          String   @id @default(uuid())
+  quotationId String
+  title       String
+  description String?
+  amount      Float
+  dueDate     DateTime?
+  orderIndex  Int      @default(0)
+  status      String   @default("PENDING") // PENDING, FUNDED, COMPLETED, APPROVED, RELEASED
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  quotation   Quotation @relation(fields: [quotationId], references: [id], onDelete: Cascade)
+  payments    MilestonePayment[]
+
+  @@index([quotationId])
+}
+
+// ---------------------------------------------------------
+// 7. Payment Protection, Invoicing & Financial Ledgers
+// ---------------------------------------------------------
+
+model Payment {
+  id              String             @id @default(uuid())
+  jobId           String
+  amount          Float
+  currency        String             @default("INR")
+  status          String             @default("PENDING") // PENDING, SECURED, RELEASED, REFUNDED, FAILED
+  paymentMethod   String?            // UPI, CARD, NETBANKING
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+
+  job             Job                @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  attempts        PaymentAttempt[]
+  transactions    PaymentTransaction[]
+  refunds         PaymentRefund[]
+  fees            PaymentFee[]
+  milestonePayments MilestonePayment[]
+
+  @@index([jobId])
+  @@index([status])
+}
+
+model PaymentAttempt {
+  id             String   @id @default(uuid())
+  paymentId      String
+  provider       String   @default("RAZORPAY") // RAZORPAY, CASHFREE, MOCK
+  providerOrderId String?
+  idempotencyKey String   @unique
+  status         String   @default("INITIATED")
+  rawResponse    String?  // JSON string
+  createdAt      DateTime @default(now())
+
+  payment        Payment  @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+
+  @@index([paymentId])
+  @@index([providerOrderId])
+}
+
+model PaymentTransaction {
+  id             String   @id @default(uuid())
+  paymentId      String
+  amount         Float
+  type           String   // CAPTURE, RELEASE, REFUND, CHARGEBACK
+  providerRefId  String?
+  createdAt      DateTime @default(now())
+
+  payment        Payment  @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+
+  @@index([paymentId])
+}
+
+model PaymentProtection {
+  id                    String   @id @default(uuid())
+  jobId                 String   @unique
+  heldAmount            Float
+  platformFeeAmount     Float    @default(0.0)
+  netProfessionalAmount Float    @default(0.0)
+  status                String   @default("HELD") // HELD, RELEASED, DISPUTED, REFUNDED
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  job                   Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
+}
+
+model PaymentRefund {
+  id             String   @id @default(uuid())
+  paymentId      String
+  amount         Float
+  reason         String?
+  status         String   @default("PENDING") // PENDING, PROCESSED, FAILED
+  providerRefundId String?
+  createdAt      DateTime @default(now())
+
+  payment        Payment  @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+
+  @@index([paymentId])
+}
+
+model PaymentFee {
+  id             String   @id @default(uuid())
+  paymentId      String
+  platformFee    Float
+  cgstAmount     Float    @default(0.0)
+  sgstAmount     Float    @default(0.0)
+  igstAmount     Float    @default(0.0)
+  totalFee       Float
+  createdAt      DateTime @default(now())
+
+  payment        Payment  @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+
+  @@index([paymentId])
+}
+
+model MilestonePayment {
+  id          String    @id @default(uuid())
+  milestoneId String
+  paymentId   String
+  amount      Float
+  status      String    @default("SECURED")
+  createdAt   DateTime  @default(now())
+
+  milestone   Milestone @relation(fields: [milestoneId], references: [id], onDelete: Cascade)
+  payment     Payment   @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+
+  @@unique([milestoneId, paymentId])
+}
+
+model ProfessionalPayout {
+  id                    String   @id @default(uuid())
+  professionalProfileId String
+  amount                Float
+  currency              String   @default("INR")
+  payoutMethod          String   @default("IMPS") // IMPS, NEFT, UPI
+  bankAccountDetails    String?  // Masked/encrypted
+  status                String   @default("PENDING") // PENDING, PROCESSING, PROCESSED, FAILED
+  processedAt           DateTime?
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  professional          ProfessionalProfile @relation(fields: [professionalProfileId], references: [id], onDelete: Cascade)
+  transactions          PayoutTransaction[]
+
+  @@index([professionalProfileId])
+  @@index([status])
+}
+
+model PayoutTransaction {
+  id        String             @id @default(uuid())
+  payoutId  String
+  amount    Float
+  reference String?
+  createdAt DateTime           @default(now())
+
+  payout    ProfessionalPayout @relation(fields: [payoutId], references: [id], onDelete: Cascade)
+
+  @@index([payoutId])
+}
+
+model Invoice {
+  id             String        @id @default(uuid())
+  jobId          String?
+  invoiceNumber  String        @unique
+  invoiceDate    DateTime      @default(now())
+  gstinPlatform  String?
+  gstinUser      String?
+  taxableAmount  Float
+  cgstAmount     Float         @default(0.0)
+  sgstAmount     Float         @default(0.0)
+  igstAmount     Float         @default(0.0)
+  totalAmount    Float
+  status         String        @default("ISSUED") // ISSUED, PAID, CANCELLED
+  createdAt      DateTime      @default(now())
+
+  job            Job?          @relation(fields: [jobId], references: [id], onDelete: SetNull)
+  items          InvoiceItem[]
+  taxRecords     TaxRecord[]
+
+  @@index([invoiceNumber])
+}
+
+model InvoiceItem {
+  id          String   @id @default(uuid())
+  invoiceId   String
+  description String
+  hsnSacCode  String?
+  quantity    Int      @default(1)
+  unitPrice   Float
+  taxRate     Float    @default(18.0)
+  amount      Float
+
+  invoice     Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  @@index([invoiceId])
+}
+
+model TaxRecord {
+  id            String   @id @default(uuid())
+  invoiceId     String
+  taxType       String   // GST_18, TDS, TCS
+  rate          Float
+  amount        Float
+  jurisdiction  String   @default("IN")
+  createdAt     DateTime @default(now())
+
+  invoice       Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  @@index([invoiceId])
+}
+
+// ---------------------------------------------------------
+// 8. Credit Wallet & Professional Credit Plans
+// ---------------------------------------------------------
+
+model CreditWallet {
+  id                    String              @id @default(uuid())
+  professionalProfileId String              @unique
+  balance               Int                 @default(0)
+  lifetimePurchased     Int                 @default(0)
+  lifetimeSpent         Int                 @default(0)
+  createdAt             DateTime            @default(now())
+  updatedAt             DateTime            @updatedAt
+
+  professional          ProfessionalProfile @relation(fields: [professionalProfileId], references: [id], onDelete: Cascade)
+  transactions          CreditTransaction[]
+  purchases             CreditPurchase[]
+  creditRefunds         CreditRefund[]
+}
+
+model CreditTransaction {
+  id                String       @id @default(uuid())
+  creditWalletId    String
+  amount            Int          // Signed integer (+55 for purchase, -5 for application)
+  transactionType   String       // PURCHASE, PLAN_CREDIT, APPLICATION_DEBIT, APPLICATION_REFUND, PROMOTIONAL_CREDIT, ADMIN_ADJUSTMENT, EXPIRATION, OTHER
+  referenceEntityId String?      // e.g. Requirement ID or Purchase ID
+  balanceAfter      Int
+  notes             String?
+  createdAt         DateTime     @default(now())
+
+  wallet            CreditWallet @relation(fields: [creditWalletId], references: [id], onDelete: Cascade)
+
+  @@index([creditWalletId])
+  @@index([transactionType])
+}
+
+model CreditPlan {
+  id            String           @id @default(uuid())
+  name          String           @unique // FREE, STARTER, GROWTH, PRO
+  price         Float
+  currency      String           @default("INR")
+  creditsCount  Int
+  perks         String?
+  isRecommended Boolean          @default(false)
+  isActive      Boolean          @default(true)
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+
+  purchases     CreditPurchase[]
+}
+
+model CreditPurchase {
+  id             String        @id @default(uuid())
+  creditWalletId String
+  creditPlanId   String?
+  creditsAwarded Int
+  amountPaid     Float
+  currency       String        @default("INR")
+  paymentId      String?
+  status         String        @default("COMPLETED") // PENDING, COMPLETED, FAILED
+  createdAt      DateTime      @default(now())
+
+  wallet         CreditWallet  @relation(fields: [creditWalletId], references: [id], onDelete: Cascade)
+  plan           CreditPlan?   @relation(fields: [creditPlanId], references: [id], onDelete: SetNull)
+
+  @@index([creditWalletId])
+}
+
+model CreditRefund {
+  id             String       @id @default(uuid())
+  creditWalletId String
+  requirementId  String
+  creditsCount   Int
+  status         String       @default("REFUNDED") // ELIGIBLE, PENDING, REFUNDED, NON_REFUNDABLE, EXPIRED
+  reason         String?
+  createdAt      DateTime     @default(now())
+
+  wallet         CreditWallet @relation(fields: [creditWalletId], references: [id], onDelete: Cascade)
+
+  @@index([creditWalletId])
+  @@index([requirementId])
+}
+
+// ---------------------------------------------------------
+// 9. Communication & Privacy (Chat & Masked Calling)
+// ---------------------------------------------------------
+
+model ChatThread {
+  id            String            @id @default(uuid())
+  jobId         String?           @unique
+  requirementId String?
+  isActive      Boolean           @default(true)
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+
+  job           Job?              @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  requirement   Requirement?      @relation(fields: [requirementId], references: [id], onDelete: Cascade)
+  participants  ChatParticipant[]
+  messages      Message[]
+
+  @@index([requirementId])
+}
+
+model ChatParticipant {
+  id           String     @id @default(uuid())
+  chatThreadId String
+  userId       String
+  lastReadAt   DateTime?
+  joinedAt     DateTime   @default(now())
+
+  chatThread   ChatThread @relation(fields: [chatThreadId], references: [id], onDelete: Cascade)
+  user         User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([chatThreadId, userId])
+  @@index([userId])
+}
+
+model Message {
+  id           String              @id @default(uuid())
+  chatThreadId String
+  senderUserId String
+  content      String
+  messageType  String              @default("TEXT") // TEXT, ATTACHMENT, SYSTEM
+  createdAt    DateTime            @default(now())
+
+  chatThread   ChatThread          @relation(fields: [chatThreadId], references: [id], onDelete: Cascade)
+  sender       User                @relation("UserMessages", fields: [senderUserId], references: [id], onDelete: Cascade)
+  attachments  MessageAttachment[]
+
+  @@index([chatThreadId])
+}
+
+model MessageAttachment {
+  id        String   @id @default(uuid())
+  messageId String
+  fileUrl   String
+  fileType  String?
+  fileSize  Int?
+  createdAt DateTime @default(now())
+
+  message   Message  @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  @@index([messageId])
+}
+
+model CallSession {
+  id                  String       @id @default(uuid())
+  jobId               String?
+  requirementId       String?
+  callerUserId        String
+  receiverUserId      String
+  callProvider        String       @default("EXOTEL") // EXOTEL, KNOWLARITY, TWILIO, MOCK
+  providerSessionId   String?
+  virtualMaskedNumber String?
+  status              String       @default("INITIATED") // INITIATED, RINGING, CONNECTED, COMPLETED, FAILED
+  durationSeconds     Int          @default(0)
+  createdAt           DateTime     @default(now())
+  updatedAt           DateTime     @updatedAt
+
+  job                 Job?         @relation(fields: [jobId], references: [id], onDelete: SetNull)
+  requirement         Requirement? @relation(fields: [requirementId], references: [id], onDelete: SetNull)
+
+  @@index([jobId])
+  @@index([requirementId])
+}
+
+// ---------------------------------------------------------
+// 10. Promotions, Reviews & Disputes
+// ---------------------------------------------------------
+
+model Promotion {
+  id                    String                 @id @default(uuid())
+  professionalProfileId String
+  promotionCampaignId   String?
+  type                  String                 // FEATURED_PROFESSIONAL, HIGHLIGHTED_PROFESSIONAL, FEATURED_QUOTATION, HOMEPAGE_BANNER
+  startsAt              DateTime
+  endsAt                DateTime
+  status                String                 @default("ACTIVE") // ACTIVE, EXPIRED, CANCELLED
+  createdAt             DateTime               @default(now())
+
+  professional          ProfessionalProfile    @relation(fields: [professionalProfileId], references: [id], onDelete: Cascade)
+  campaign              PromotionCampaign?     @relation(fields: [promotionCampaignId], references: [id], onDelete: SetNull)
+  placements            PromotionPlacement[]
+  transactions          PromotionTransaction[]
+
+  @@index([professionalProfileId])
+  @@index([status])
+}
+
+model PromotionCampaign {
+  id          String      @id @default(uuid())
+  name        String
+  description String?
+  discountPct Float       @default(0.0)
+  startsAt    DateTime
+  endsAt      DateTime
+  isActive    Boolean     @default(true)
+  createdAt   DateTime    @default(now())
+
+  promotions  Promotion[]
+}
+
+model PromotionPlacement {
+  id          String    @id @default(uuid())
+  promotionId String
+  placement   String    // SEARCH_TOP, HOMEPAGE, CATEGORY_HEADER
+  createdAt   DateTime  @default(now())
+
+  promotion   Promotion @relation(fields: [promotionId], references: [id], onDelete: Cascade)
+
+  @@index([promotionId])
+}
+
+model PromotionTransaction {
+  id          String    @id @default(uuid())
+  promotionId String
+  amountPaid  Float
+  currency    String    @default("INR")
+  createdAt   DateTime  @default(now())
+
+  promotion   Promotion @relation(fields: [promotionId], references: [id], onDelete: Cascade)
+
+  @@index([promotionId])
+}
+
+model Review {
+  id                    String              @id @default(uuid())
+  jobId                 String              @unique
+  customerId            String
+  professionalProfileId String
+  rating                Int                 // 1 to 5
+  comment               String?
+  tags                  String?
+  responseComment       String?
+  moderationStatus      String              @default("APPROVED") // PENDING, APPROVED, REJECTED
+  createdAt             DateTime            @default(now())
+  updatedAt             DateTime            @updatedAt
+
+  job                   Job                 @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  customer              CustomerProfile     @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  professional          ProfessionalProfile @relation(fields: [professionalProfileId], references: [id], onDelete: Cascade)
+
+  @@index([professionalProfileId])
+  @@index([rating])
+}
+
+model Dispute {
+  id              String                 @id @default(uuid())
+  jobId           String
+  raisedByUserId  String
+  reason          String
+  amountDisputed  Float
+  status          String                 @default("OPEN") // OPEN, UNDER_REVIEW, WAITING_FOR_CUSTOMER, WAITING_FOR_PROFESSIONAL, RESOLUTION_PROPOSED, RESOLVED, CLOSED
+  createdAt       DateTime               @default(now())
+  updatedAt       DateTime               @updatedAt
+
+  job             Job                    @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  raisedBy        User                   @relation("DisputeRaiser", fields: [raisedByUserId], references: [id])
+  evidences       DisputeEvidence[]
+  resolutions     DisputeResolution[]
+  statusHistory   DisputeStatusHistory[]
+
+  @@index([jobId])
+  @@index([status])
+}
+
+model DisputeEvidence {
+  id          String   @id @default(uuid())
+  disputeId   String
+  userId      String
+  fileUrl     String
+  description String?
+  createdAt   DateTime @default(now())
+
+  dispute     Dispute  @relation(fields: [disputeId], references: [id], onDelete: Cascade)
+  submittedBy User     @relation("EvidenceSubmitter", fields: [userId], references: [id])
+
+  @@index([disputeId])
+}
+
+model DisputeResolution {
+  id                String   @id @default(uuid())
+  disputeId         String
+  resolutionOutcome String   // FULL_REFUND, PARTIAL_REFUND, RELEASE_PAYMENT, REWORK_REQUESTED, MUTUAL_SETTLEMENT, NO_ACTION
+  refundAmount      Float    @default(0.0)
+  notes             String
+  arbitratedByUserId String?
+  createdAt         DateTime @default(now())
+
+  dispute           Dispute  @relation(fields: [disputeId], references: [id], onDelete: Cascade)
+
+  @@index([disputeId])
+}
+
+model DisputeStatusHistory {
+  id              String   @id @default(uuid())
+  disputeId       String
+  previousStatus  String?
+  newStatus       String
+  changedByUserId String?
+  reason          String?
+  createdAt       DateTime @default(now())
+
+  dispute         Dispute  @relation(fields: [disputeId], references: [id], onDelete: Cascade)
+
+  @@index([disputeId])
+}
+
+// ---------------------------------------------------------
+// 11. Notifications, Dynamic Settings & System Auditing
+// ---------------------------------------------------------
+
+model Notification {
+  id        String   @id @default(uuid())
+  userId    String
+  title     String
+  message   String
+  type      String   // REQUIREMENT, QUOTATION, HIRE, JOB_STATUS, PAYMENT, DISPUTE, REVIEW, SYSTEM
+  actionUrl String?
+  isRead    Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([isRead])
+}
+
+model NotificationPreference {
+  id           String   @id @default(uuid())
+  userId       String   @unique
+  emailEnabled Boolean  @default(true)
+  smsEnabled   Boolean  @default(true)
+  pushEnabled  Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model SystemSetting {
+  id              String   @id @default(uuid())
+  key             String   @unique
+  value           String
+  type            String   @default("STRING") // STRING, NUMBER, BOOLEAN, JSON
+  description     String?
+  updatedByUserId String?
+  updatedAt       DateTime @updatedAt
+
+  updatedBy       User?    @relation("SettingUpdater", fields: [updatedByUserId], references: [id])
+
+  @@index([key])
+}
+
+model AuditLog {
+  id          String   @id @default(uuid())
+  userId      String?
+  action      String   // LOGIN, LOGOUT, REQUIREMENT_CREATE, HIRE, CREDIT_DEDUCT, PAYMENT_CAPTURE, DISPUTE_RESOLVE, SETTING_CHANGE
+  entityType  String?
+  entityId    String?
+  ipAddress   String?
+  userAgent   String?
+  metadata    String?  // JSON string
+  createdAt   DateTime @default(now())
+
+  user        User?    @relation("UserAuditLogs", fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([action])
+  @@index([createdAt])
+}

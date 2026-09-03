@@ -1,0 +1,1094 @@
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// ---------------------------------------------------------
+// 1. Identity & Role-Based Access Control (RBAC)
+// ---------------------------------------------------------
+
+model User {
+  id                String       @id @default(uuid()) @db.VarChar(36)
+  email             String?      @unique @db.VarChar(191)
+  phone             String?      @unique @db.VarChar(32)
+  phoneCountryCode  String       @default("+91") @db.VarChar(8)
+  passwordHash      String?      @db.VarChar(255)
+  firstName         String       @db.VarChar(100)
+  lastName          String       @db.VarChar(100)
+  status            String       @default("ACTIVE") @db.VarChar(32) // ACTIVE, INACTIVE, SUSPENDED, PENDING_VERIFICATION
+  emailVerifiedAt   DateTime?
+  phoneVerifiedAt   DateTime?
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+  deletedAt         DateTime?
+
+  roles             UserRole[]
+  refreshTokens     RefreshToken[]
+  customerProfile   CustomerProfile?
+  professionalProfile ProfessionalProfile?
+  notifications     Notification[]
+  notificationPref  NotificationPreference?
+  messagesSent      Message[]    @relation("UserMessages")
+  chatParticipants  ChatParticipant[]
+  statusChanges     JobStatusHistory[] @relation("StatusChanger")
+  disputesRaised    Dispute[]    @relation("DisputeRaiser")
+  evidences         DisputeEvidence[] @relation("EvidenceSubmitter")
+  auditLogs         AuditLog[]   @relation("UserAuditLogs")
+  systemSettingsUpdated SystemSetting[] @relation("SettingUpdater")
+  shortlists        Shortlist[]
+
+  @@index([email])
+  @@index([phone])
+}
+
+model Role {
+  id          String           @id @default(uuid()) @db.VarChar(36)
+  name        String           @unique @db.VarChar(50) // CUSTOMER, PROFESSIONAL, ADMIN, SUPER_ADMIN, SUPPORT, FINANCE, VERIFICATION_ADMIN
+  description String?          @db.VarChar(255)
+  userRoles   UserRole[]
+  permissions RolePermission[]
+}
+
+model Permission {
+  id          String           @id @default(uuid()) @db.VarChar(36)
+  slug        String           @unique @db.VarChar(100)
+  name        String           @db.VarChar(100)
+  description String?          @db.VarChar(255)
+  roles       RolePermission[]
+}
+
+model RolePermission {
+  id           String     @id @default(uuid()) @db.VarChar(36)
+  roleId       String     @db.VarChar(36)
+  permissionId String     @db.VarChar(36)
+  role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@unique([roleId, permissionId])
+}
+
+model UserRole {
+  id        String   @id @default(uuid()) @db.VarChar(36)
+  userId    String   @db.VarChar(36)
+  roleId    String   @db.VarChar(36)
+  createdAt DateTime @default(now())
+
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role      Role     @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, roleId])
+  @@index([userId])
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid()) @db.VarChar(36)
+  userId    String   @db.VarChar(36)
+  tokenHash String   @unique @db.VarChar(255)
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime @default(now())
+
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model OtpVerification {
+  id          String   @id @default(uuid()) @db.VarChar(36)
+  phone       String   @db.VarChar(32)
+  otpHash     String   @db.VarChar(255)
+  attempts    Int      @default(0)
+  maxAttempts Int      @default(3)
+  isUsed      Boolean  @default(false)
+  expiresAt   DateTime
+  createdAt   DateTime @default(now())
+
+  @@index([phone])
+}
+
+// ---------------------------------------------------------
+// 2. Profiles & Verification
+// ---------------------------------------------------------
+
+model CustomerProfile {
+  id                 String       @id @default(uuid()) @db.VarChar(36)
+  userId             String       @unique @db.VarChar(36)
+  cityId             String?      @db.VarChar(36)
+  areaId             String?      @db.VarChar(36)
+  pincodeId          String?      @db.VarChar(36)
+  addressLine1       String?      @db.VarChar(255)
+  addressLine2       String?      @db.VarChar(255)
+  trustScore         Decimal      @default(100.0) @db.Decimal(5, 2)
+  jobsPostedCount    Int          @default(0)
+  jobsCompletedCount Int          @default(0)
+  createdAt          DateTime     @default(now())
+  updatedAt          DateTime     @updatedAt
+
+  user               User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  city               City?        @relation(fields: [cityId], references: [id])
+  area               Area?        @relation(fields: [areaId], references: [id])
+  pincode            Pincode?     @relation(fields: [pincodeId], references: [id])
+  requirements       Requirement[]
+  jobs               Job[]
+  reviewsWritten     Review[]
+}
+
+model ProfessionalProfile {
+  id                   String       @id @default(uuid()) @db.VarChar(36)
+  userId               String       @unique @db.VarChar(36)
+  title                String?      @db.VarChar(150)
+  bio                  String?      @db.Text
+  yearsOfExperience    Int          @default(0)
+  hourlyRate           Decimal      @default(0) @db.Decimal(12, 2)
+  currency             String       @default("INR") @db.VarChar(3)
+  languages            String?      @db.VarChar(255)
+  rating               Decimal      @default(0.0) @db.Decimal(3, 2)
+  reviewsCount         Int          @default(0)
+  completedJobsCount   Int          @default(0)
+  responseRatePercentage Decimal    @default(100.0) @db.Decimal(5, 2)
+  avatarUrl            String?      @db.VarChar(512)
+  isFeatured           Boolean      @default(false)
+  isVerified           Boolean      @default(false)
+  createdAt            DateTime     @default(now())
+  updatedAt            DateTime     @updatedAt
+
+  user                 User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  skills               ProfessionalSkill[]
+  serviceAreas         ServiceArea[]
+  verification         Verification?
+  creditWallet         CreditWallet?
+  applications         Application[]
+  quotations           Quotation[]
+  jobs                 Job[]
+  reviewsReceived      Review[]
+  promotions           Promotion[]
+  payouts              ProfessionalPayout[]
+  shortlists           Shortlist[]
+}
+
+model Verification {
+  id                   String       @id @default(uuid()) @db.VarChar(36)
+  professionalProfileId String      @unique @db.VarChar(36)
+  status               String       @default("NOT_STARTED") @db.VarChar(32) // NOT_STARTED, PENDING, VERIFIED, FAILED, REVIEW_REQUIRED, EXPIRED
+  provider             String       @default("DIGILOCKER") @db.VarChar(32) // DIGILOCKER, MANUAL
+  referenceId          String?      @db.VarChar(128)
+  verifiedAt           DateTime?
+  rejectionReason      String?      @db.VarChar(255)
+  createdAt            DateTime     @default(now())
+  updatedAt            DateTime     @updatedAt
+
+  professional         ProfessionalProfile @relation(fields: [professionalProfileId], references: [id], onDelete: Cascade)
+}
+
+// ---------------------------------------------------------
+// 3. Indian Location Architecture
+// ---------------------------------------------------------
+
+model State {
+  id        String   @id @default(uuid()) @db.VarChar(36)
+  name      String   @unique @db.VarChar(100)
+  code      String   @unique @db.VarChar(10) // e.g., KA, MH, DL
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  cities    City[]
+  requirements Requirement[]
+}
+
+model City {
+  id        String   @id @default(uuid()) @db.VarChar(36)
+  stateId   String   @db.VarChar(36)
+  name      String   @db.VarChar(100)
+  slug      String   @unique @db.VarChar(120)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  state     State    @relation(fields: [stateId], references: [id], onDelete: Cascade)
+  areas     Area[]
+  customerProfiles CustomerProfile[]
+  requirements Requirement[]
+
+  @@index([stateId])
+}
+
+model Area {
+  id        String   @id @default(uuid()) @db.VarChar(36)
+  cityId    String   @db.VarChar(36)
+  name      String   @db.VarChar(100)
+  locality  String?  @db.VarChar(150)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  city      City     @relation(fields: [cityId], references: [id], onDelete: Cascade)
+  pincodes  Pincode[]
+  customerProfiles CustomerProfile[]
+  serviceAreas ServiceArea[]
+  requirements Requirement[]
+
+  @@index([cityId])
+}
+
+model Pincode {
+  id        String   @id @default(uuid()) @db.VarChar(36)
+  areaId    String   @db.VarChar(36)
+  pincode   String   @unique @db.VarChar(10) // 6-digit PIN
+  latitude  Decimal? @db.Decimal(10, 7)
+  longitude Decimal? @db.Decimal(10, 7)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  area      Area     @relation(fields: [areaId], references: [id], onDelete: Cascade)
+  customerProfiles CustomerProfile[]
+  serviceAreas ServiceArea[]
+  requirements Requirement[]
+
+  @@index([pincode])
+  @@index([areaId])
+}
+
+model ServiceArea {
+  id                   String   @id @default(uuid()) @db.VarChar(36)
+  professionalProfileId String  @db.VarChar(36)
+  areaId               String?  @db.VarChar(36)
+  pincodeId            String?  @db.VarChar(36)
+  radiusKm             Decimal  @default(10.0) @db.Decimal(5, 2)
+  isActive             Boolean  @default(true)
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  professional         ProfessionalProfile @relation(fields: [professionalProfileId], references: [id], onDelete: Cascade)
+  area                 Area?    @relation(fields: [areaId], references: [id])
+  pincode              Pincode? @relation(fields: [pincodeId], references: [id])
+
+  @@index([professionalProfileId])
+  @@index([pincodeId])
+}
+
+// ---------------------------------------------------------
+// 4. Categories, Subcategories & Skills
+// ---------------------------------------------------------
+
+model Category {
+  id            String        @id @default(uuid()) @db.VarChar(36)
+  name          String        @unique @db.VarChar(100)
+  slug          String        @unique @db.VarChar(120)
+  description   String?       @db.Text
+  icon          String?       @db.VarChar(50)
+  isActive      Boolean       @default(true)
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  subcategories Subcategory[]
+  requirements  Requirement[]
+}
+
+model Subcategory {
+  id          String        @id @default(uuid()) @db.VarChar(36)
+  categoryId  String        @db.VarChar(36)
+  name        String        @db.VarChar(100)
+  slug        String        @unique @db.VarChar(120)
+  description String?       @db.Text
+  isActive    Boolean       @default(true)
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  category    Category      @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  requirements Requirement[]
+
+  @@index([categoryId])
+}
+
+model Skill {
+  id            String              @id @default(uuid()) @db.VarChar(36)
+  name          String              @unique @db.VarChar(100)
+  description   String?             @db.VarChar(255)
+  createdAt     DateTime            @default(now())
+
+  professionals ProfessionalSkill[]
+}
+
+model ProfessionalSkill {
+  id                    String              @id @default(uuid()) @db.VarChar(36)
+  professionalProfileId String              @db.VarChar(36)
+  skillId               String              @db.VarChar(36)
+  yearsOfExperience     Int                 @default(1)
+
+  professional          ProfessionalProfile @relation(fields: [professionalProfileId], references: [id], onDelete: Cascade)
+  skill                 Skill               @relation(fields: [skillId], references: [id], onDelete: Cascade)
+
+  @@unique([professionalProfileId, skillId])
+  @@index([professionalProfileId])
+}
+
+// ---------------------------------------------------------
+// 5. Requirements, Applications, Quotations & Shortlists
+// ---------------------------------------------------------
+
+model Requirement {
+  id                    String       @id @default(uuid()) @db.VarChar(36)
+  customerId            String       @db.VarChar(36)
+  categoryId            String       @db.VarChar(36)
+  subcategoryId         String       @db.VarChar(36)
+  stateId               String?      @db.VarChar(36)
+  cityId                String?      @db.VarChar(36)
+  areaId                String?      @db.VarChar(36)
+  pincodeId             String?      @db.VarChar(36)
+  title                 String       @db.VarChar(200)
+  description           String       @db.Text
+  budgetType            String       @default("FIXED") @db.VarChar(20) // FIXED, RANGE
+  budgetMin             Decimal      @db.Decimal(12, 2)
+  budgetMax             Decimal?     @db.Decimal(12, 2)
+  currency              String       @default("INR") @db.VarChar(3)
+  preferredDate         DateTime?
+  preferredTime         String?      @db.VarChar(50)
+  timeline              String?      @db.VarChar(100)
+  frequency             String?      @default("ONE_TIME") @db.VarChar(50)
+  experienceRequirement String?      @db.VarChar(100)
+  genderPreference      String?      @default("NO_PREFERENCE") @db.VarChar(30)
+  specialInstructions   String?      @db.Text
+  status                String       @default("PUBLISHED") @db.VarChar(32)
+  createdAt             DateTime     @default(now())
+  updatedAt             DateTime     @updatedAt
+
+  customer              CustomerProfile @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  category              Category        @relation(fields: [categoryId], references: [id])
+  subcategory           Subcategory     @relation(fields: [subcategoryId], references: [id])
+  state                 State?          @relation(fields: [stateId], references: [id])
+  city                  City?           @relation(fields: [cityId], references: [id])
+  area                  Area?           @relation(fields: [areaId], references: [id])
+  pincode               Pincode?        @relation(fields: [pincodeId], references: [id])
+
+  attachments           RequirementAttachment[]
+  applications          Application[]
+  quotations            Quotation[]
+  shortlists            Shortlist[]
+  jobs                  Job[]
+  chatThreads           ChatThread[]
+  callSessions          CallSession[]
+
+  @@index([customerId])
+  @@index([categoryId])
+  @@index([subcategoryId])
+  @@index([status])
+}
+
+model RequirementAttachment {
+  id            String      @id @default(uuid()) @db.VarChar(36)
+  requirementId String      @db.VarChar(36)
+  fileUrl       String      @db.VarChar(512)
+  fileType      String?     @db.VarChar(50)
+  fileSize      Int?
+  createdAt     DateTime    @default(now())
+
+  requirement   Requirement @relation(fields: [requirementId], references: [id], onDelete: Cascade)
+
+  @@index([requirementId])
+}
+
+model Application {
+  id                    String              @id @default(uuid()) @db.VarChar(36)
+  requirementId         String              @db.VarChar(36)
+  professionalProfileId String              @db.VarChar(36)
+  creditsSpent          Int                 @default(0)
+  aiMatchScore          Decimal?            @db.Decimal(5, 2)
+  status                String              @default("SUBMITTED") @db.VarChar(32)
+  createdAt             DateTime            @default(now())
+  updatedAt             DateTime            @updatedAt
+
+  requirement           Requirement         @relation(fields: [requirementId], references: [id], onDelete: Cascade)
+  professional          ProfessionalProfile @relation(fields: [professionalProfileId], references: [id], onDelete: Cascade)
+  quotations            Quotation[]
+
+  @@unique([requirementId, professionalProfileId])
+  @@index([requirementId])
+  @@index([professionalProfileId])
+}
+
+model Quotation {
+  id                    String              @id @default(uuid()) @db.VarChar(36)
+  applicationId         String?             @db.VarChar(36)
+  requirementId         String              @db.VarChar(36)
+  professionalProfileId String              @db.VarChar(36)
+  proposedPrice         Decimal             @db.Decimal(12, 2)
+  currency              String              @default("INR") @db.VarChar(3)
+  estimatedTimeline     String              @db.VarChar(100)
+  proposedStartDate     DateTime?
+  message               String?             @db.Text
+  scopeSummary          String?             @db.Text
+  additionalCharges     Decimal             @default(0.0) @db.Decimal(12, 2)
+  status                String              @default("SUBMITTED") @db.VarChar(32)
+  createdAt             DateTime            @default(now())
+  updatedAt             DateTime            @updatedAt
+
+  application           Application?        @relation(fields: [applicationId], references: [id], onDelete: SetNull)
+  requirement           Requirement         @relation(fields: [requirementId], references: [id], onDelete: Cascade)
+  professional          ProfessionalProfile @relation(fields: [professionalProfileId], references: [id], onDelete: Cascade)
+  milestones            Milestone[]
+  job                   Job?
+
+  @@index([requirementId])
+  @@index([professionalProfileId])
+  @@index([status])
+}
+
+model Shortlist {
+  id                    String              @id @default(uuid()) @db.VarChar(36)
+  requirementId         String              @db.VarChar(36)
+  professionalProfileId String              @db.VarChar(36)
+  userId                String              @db.VarChar(36)
+  notes                 String?             @db.Text
+  createdAt             DateTime            @default(now())
+
+  requirement           Requirement         @relation(fields: [requirementId], references: [id], onDelete: Cascade)
+  professional          ProfessionalProfile @relation(fields: [professionalProfileId], references: [id], onDelete: Cascade)
+  user                  User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([requirementId, professionalProfileId])
+  @@index([requirementId])
+}
+
+// ---------------------------------------------------------
+// 6. Job Lifecycle, Milestones & Status History
+// ---------------------------------------------------------
+
+model Job {
+  id                       String              @id @default(uuid()) @db.VarChar(36)
+  requirementId            String              @db.VarChar(36)
+  quotationId              String              @unique @db.VarChar(36)
+  customerId               String              @db.VarChar(36)
+  professionalProfileId    String              @db.VarChar(36)
+  agreedPrice              Decimal             @db.Decimal(12, 2)
+  currency                 String              @default("INR") @db.VarChar(3)
+  status                   String              @default("HIRED") @db.VarChar(32)
+  paymentProtectionEnabled Boolean             @default(false)
+  scheduledStartTime       DateTime?
+  scheduledEndTime         DateTime?
+  actualStartTime          DateTime?
+  actualEndTime            DateTime?
+  createdAt                DateTime            @default(now())
+  updatedAt                DateTime            @updatedAt
+
+  requirement              Requirement         @relation(fields: [requirementId], references: [id])
+  quotation                Quotation           @relation(fields: [quotationId], references: [id])
+  customer                 CustomerProfile     @relation(fields: [customerId], references: [id])
+  professional             ProfessionalProfile @relation(fields: [professionalProfileId], references: [id])
+
+  statusHistory            JobStatusHistory[]
+  payments                 Payment[]
+  paymentProtection        PaymentProtection?
+  chatThread               ChatThread?
+  callSessions             CallSession[]
+  review                   Review?
+  disputes                 Dispute[]
+  invoices                 Invoice[]
+
+  @@index([requirementId])
+  @@index([customerId])
+  @@index([professionalProfileId])
+  @@index([status])
+}
+
+model JobStatusHistory {
+  id              String   @id @default(uuid()) @db.VarChar(36)
+  jobId           String   @db.VarChar(36)
+  previousStatus  String?  @db.VarChar(32)
+  newStatus       String   @db.VarChar(32)
+  changedByUserId String?  @db.VarChar(36)
+  reason          String?  @db.VarChar(255)
+  metadata        String?  @db.Text // JSON string
+  createdAt       DateTime @default(now())
+
+  job             Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  changedBy       User?    @relation("StatusChanger", fields: [changedByUserId], references: [id])
+
+  @@index([jobId])
+}
+
+model Milestone {
+  id          String   @id @default(uuid()) @db.VarChar(36)
+  quotationId String   @db.VarChar(36)
+  title       String   @db.VarChar(150)
+  description String?  @db.Text
+  amount      Decimal  @db.Decimal(12, 2)
+  dueDate     DateTime?
+  orderIndex  Int      @default(0)
+  status      String   @default("PENDING") @db.VarChar(32)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  quotation   Quotation @relation(fields: [quotationId], references: [id], onDelete: Cascade)
+  payments    MilestonePayment[]
+
+  @@index([quotationId])
+}
+
+// ---------------------------------------------------------
+// 7. Payment Protection, Invoicing & Financial Ledgers
+// ---------------------------------------------------------
+
+model Payment {
+  id              String             @id @default(uuid()) @db.VarChar(36)
+  jobId           String             @db.VarChar(36)
+  amount          Decimal            @db.Decimal(12, 2)
+  currency        String             @default("INR") @db.VarChar(3)
+  status          String             @default("PENDING") @db.VarChar(32)
+  paymentMethod   String?            @db.VarChar(32)
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+
+  job             Job                @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  attempts        PaymentAttempt[]
+  transactions    PaymentTransaction[]
+  refunds         PaymentRefund[]
+  fees            PaymentFee[]
+  milestonePayments MilestonePayment[]
+
+  @@index([jobId])
+  @@index([status])
+}
+
+model PaymentAttempt {
+  id             String   @id @default(uuid()) @db.VarChar(36)
+  paymentId      String   @db.VarChar(36)
+  provider       String   @default("RAZORPAY") @db.VarChar(32)
+  providerOrderId String? @db.VarChar(128)
+  idempotencyKey String   @unique @db.VarChar(128)
+  status         String   @default("INITIATED") @db.VarChar(32)
+  rawResponse    String?  @db.Text
+  createdAt      DateTime @default(now())
+
+  payment        Payment  @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+
+  @@index([paymentId])
+  @@index([providerOrderId])
+}
+
+model PaymentTransaction {
+  id             String   @id @default(uuid()) @db.VarChar(36)
+  paymentId      String   @db.VarChar(36)
+  amount         Decimal  @db.Decimal(12, 2)
+  type           String   @db.VarChar(32)
+  providerRefId  String?  @db.VarChar(128)
+  createdAt      DateTime @default(now())
+
+  payment        Payment  @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+
+  @@index([paymentId])
+}
+
+model PaymentProtection {
+  id                    String   @id @default(uuid()) @db.VarChar(36)
+  jobId                 String   @unique @db.VarChar(36)
+  heldAmount            Decimal  @db.Decimal(12, 2)
+  platformFeeAmount     Decimal  @default(0.0) @db.Decimal(12, 2)
+  netProfessionalAmount Decimal  @default(0.0) @db.Decimal(12, 2)
+  status                String   @default("HELD") @db.VarChar(32)
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  job                   Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
+}
+
+model PaymentRefund {
+  id             String   @id @default(uuid()) @db.VarChar(36)
+  paymentId      String   @db.VarChar(36)
+  amount         Decimal  @db.Decimal(12, 2)
+  reason         String?  @db.VarChar(255)
+  status         String   @default("PENDING") @db.VarChar(32)
+  providerRefundId String? @db.VarChar(128)
+  createdAt      DateTime @default(now())
+
+  payment        Payment  @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+
+  @@index([paymentId])
+}
+
+model PaymentFee {
+  id             String   @id @default(uuid()) @db.VarChar(36)
+  paymentId      String   @db.VarChar(36)
+  platformFee    Decimal  @db.Decimal(12, 2)
+  cgstAmount     Decimal  @default(0.0) @db.Decimal(12, 2)
+  sgstAmount     Decimal  @default(0.0) @db.Decimal(12, 2)
+  igstAmount     Decimal  @default(0.0) @db.Decimal(12, 2)
+  totalFee       Decimal  @db.Decimal(12, 2)
+  createdAt      DateTime @default(now())
+
+  payment        Payment  @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+
+  @@index([paymentId])
+}
+
+model MilestonePayment {
+  id          String    @id @default(uuid()) @db.VarChar(36)
+  milestoneId String    @db.VarChar(36)
+  paymentId   String    @db.VarChar(36)
+  amount      Decimal   @db.Decimal(12, 2)
+  status      String    @default("SECURED") @db.VarChar(32)
+  createdAt   DateTime  @default(now())
+
+  milestone   Milestone @relation(fields: [milestoneId], references: [id], onDelete: Cascade)
+  payment     Payment   @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+
+  @@unique([milestoneId, paymentId])
+}
+
+model ProfessionalPayout {
+  id                    String   @id @default(uuid()) @db.VarChar(36)
+  professionalProfileId String   @db.VarChar(36)
+  amount                Decimal  @db.Decimal(12, 2)
+  currency              String   @default("INR") @db.VarChar(3)
+  payoutMethod          String   @default("IMPS") @db.VarChar(32)
+  bankAccountDetails    String?  @db.VarChar(512)
+  status                String   @default("PENDING") @db.VarChar(32)
+  processedAt           DateTime?
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  professional          ProfessionalProfile @relation(fields: [professionalProfileId], references: [id], onDelete: Cascade)
+  transactions          PayoutTransaction[]
+
+  @@index([professionalProfileId])
+  @@index([status])
+}
+
+model PayoutTransaction {
+  id        String             @id @default(uuid()) @db.VarChar(36)
+  payoutId  String             @db.VarChar(36)
+  amount    Decimal            @db.Decimal(12, 2)
+  reference String?            @db.VarChar(128)
+  createdAt DateTime           @default(now())
+
+  payout    ProfessionalPayout @relation(fields: [payoutId], references: [id], onDelete: Cascade)
+
+  @@index([payoutId])
+}
+
+model Invoice {
+  id             String        @id @default(uuid()) @db.VarChar(36)
+  jobId          String?       @db.VarChar(36)
+  invoiceNumber  String        @unique @db.VarChar(64)
+  invoiceDate    DateTime      @default(now())
+  gstinPlatform  String?       @db.VarChar(32)
+  gstinUser      String?       @db.VarChar(32)
+  taxableAmount  Decimal       @db.Decimal(12, 2)
+  cgstAmount     Decimal       @default(0.0) @db.Decimal(12, 2)
+  sgstAmount     Decimal       @default(0.0) @db.Decimal(12, 2)
+  igstAmount     Decimal       @default(0.0) @db.Decimal(12, 2)
+  totalAmount    Decimal       @db.Decimal(12, 2)
+  status         String        @default("ISSUED") @db.VarChar(32)
+  createdAt      DateTime      @default(now())
+
+  job            Job?          @relation(fields: [jobId], references: [id], onDelete: SetNull)
+  items          InvoiceItem[]
+  taxRecords     TaxRecord[]
+
+  @@index([invoiceNumber])
+}
+
+model InvoiceItem {
+  id          String   @id @default(uuid()) @db.VarChar(36)
+  invoiceId   String   @db.VarChar(36)
+  description String   @db.VarChar(255)
+  hsnSacCode  String?  @db.VarChar(32)
+  quantity    Int      @default(1)
+  unitPrice   Decimal  @db.Decimal(12, 2)
+  taxRate     Decimal  @default(18.0) @db.Decimal(5, 2)
+  amount      Decimal  @db.Decimal(12, 2)
+
+  invoice     Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  @@index([invoiceId])
+}
+
+model TaxRecord {
+  id            String   @id @default(uuid()) @db.VarChar(36)
+  invoiceId     String   @db.VarChar(36)
+  taxType       String   @db.VarChar(32)
+  rate          Decimal  @db.Decimal(5, 2)
+  amount        Decimal  @db.Decimal(12, 2)
+  jurisdiction  String   @default("IN") @db.VarChar(10)
+  createdAt     DateTime @default(now())
+
+  invoice       Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  @@index([invoiceId])
+}
+
+// ---------------------------------------------------------
+// 8. Credit Wallet & Professional Credit Plans
+// ---------------------------------------------------------
+
+model CreditWallet {
+  id                    String              @id @default(uuid()) @db.VarChar(36)
+  professionalProfileId String              @unique @db.VarChar(36)
+  balance               Int                 @default(0)
+  lifetimePurchased     Int                 @default(0)
+  lifetimeSpent         Int                 @default(0)
+  createdAt             DateTime            @default(now())
+  updatedAt             DateTime            @updatedAt
+
+  professional          ProfessionalProfile @relation(fields: [professionalProfileId], references: [id], onDelete: Cascade)
+  transactions          CreditTransaction[]
+  purchases             CreditPurchase[]
+  creditRefunds         CreditRefund[]
+}
+
+model CreditTransaction {
+  id                String       @id @default(uuid()) @db.VarChar(36)
+  creditWalletId    String       @db.VarChar(36)
+  amount            Int          // Signed integer (+55 for purchase, -5 for application)
+  transactionType   String       @db.VarChar(32) // PURCHASE, PLAN_CREDIT, APPLICATION_DEBIT, APPLICATION_REFUND, PROMOTIONAL_CREDIT, ADMIN_ADJUSTMENT, EXPIRATION, OTHER
+  referenceEntityId String?      @db.VarChar(36)
+  balanceAfter      Int
+  notes             String?      @db.VarChar(255)
+  createdAt         DateTime     @default(now())
+
+  wallet            CreditWallet @relation(fields: [creditWalletId], references: [id], onDelete: Cascade)
+
+  @@index([creditWalletId])
+  @@index([transactionType])
+}
+
+model CreditPlan {
+  id            String           @id @default(uuid()) @db.VarChar(36)
+  name          String           @unique @db.VarChar(50) // FREE, STARTER, GROWTH, PRO
+  price         Decimal          @db.Decimal(12, 2)
+  currency      String           @default("INR") @db.VarChar(3)
+  creditsCount  Int
+  perks         String?          @db.Text
+  isRecommended Boolean          @default(false)
+  isActive      Boolean          @default(true)
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+
+  purchases     CreditPurchase[]
+}
+
+model CreditPurchase {
+  id             String        @id @default(uuid()) @db.VarChar(36)
+  creditWalletId String        @db.VarChar(36)
+  creditPlanId   String?       @db.VarChar(36)
+  creditsAwarded Int
+  amountPaid     Decimal       @db.Decimal(12, 2)
+  currency       String        @default("INR") @db.VarChar(3)
+  paymentId      String?       @db.VarChar(128)
+  status         String        @default("COMPLETED") @db.VarChar(32)
+  createdAt      DateTime      @default(now())
+
+  wallet         CreditWallet  @relation(fields: [creditWalletId], references: [id], onDelete: Cascade)
+  plan           CreditPlan?   @relation(fields: [creditPlanId], references: [id], onDelete: SetNull)
+
+  @@index([creditWalletId])
+}
+
+model CreditRefund {
+  id             String       @id @default(uuid()) @db.VarChar(36)
+  creditWalletId String       @db.VarChar(36)
+  requirementId  String       @db.VarChar(36)
+  creditsCount   Int
+  status         String       @default("REFUNDED") @db.VarChar(32)
+  reason         String?      @db.VarChar(255)
+  createdAt      DateTime     @default(now())
+
+  wallet         CreditWallet @relation(fields: [creditWalletId], references: [id], onDelete: Cascade)
+
+  @@index([creditWalletId])
+  @@index([requirementId])
+}
+
+// ---------------------------------------------------------
+// 9. Communication & Privacy (Chat & Masked Calling)
+// ---------------------------------------------------------
+
+model ChatThread {
+  id            String            @id @default(uuid()) @db.VarChar(36)
+  jobId         String?           @unique @db.VarChar(36)
+  requirementId String?           @db.VarChar(36)
+  isActive      Boolean           @default(true)
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+
+  job           Job?              @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  requirement   Requirement?      @relation(fields: [requirementId], references: [id], onDelete: Cascade)
+  participants  ChatParticipant[]
+  messages      Message[]
+
+  @@index([requirementId])
+}
+
+model ChatParticipant {
+  id           String     @id @default(uuid()) @db.VarChar(36)
+  chatThreadId String     @db.VarChar(36)
+  userId       String     @db.VarChar(36)
+  lastReadAt   DateTime?
+  joinedAt     DateTime   @default(now())
+
+  chatThread   ChatThread @relation(fields: [chatThreadId], references: [id], onDelete: Cascade)
+  user         User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([chatThreadId, userId])
+  @@index([userId])
+}
+
+model Message {
+  id           String              @id @default(uuid()) @db.VarChar(36)
+  chatThreadId String              @db.VarChar(36)
+  senderUserId String              @db.VarChar(36)
+  content      String              @db.Text
+  messageType  String              @default("TEXT") @db.VarChar(32)
+  createdAt    DateTime            @default(now())
+
+  chatThread   ChatThread          @relation(fields: [chatThreadId], references: [id], onDelete: Cascade)
+  sender       User                @relation("UserMessages", fields: [senderUserId], references: [id], onDelete: Cascade)
+  attachments  MessageAttachment[]
+
+  @@index([chatThreadId])
+}
+
+model MessageAttachment {
+  id        String   @id @default(uuid()) @db.VarChar(36)
+  messageId String   @db.VarChar(36)
+  fileUrl   String   @db.VarChar(512)
+  fileType  String?  @db.VarChar(50)
+  fileSize  Int?
+  createdAt DateTime @default(now())
+
+  message   Message  @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  @@index([messageId])
+}
+
+model CallSession {
+  id                  String       @id @default(uuid()) @db.VarChar(36)
+  jobId               String?      @db.VarChar(36)
+  requirementId       String?      @db.VarChar(36)
+  callerUserId        String       @db.VarChar(36)
+  receiverUserId      String       @db.VarChar(36)
+  callProvider        String       @default("EXOTEL") @db.VarChar(32)
+  providerSessionId   String?      @db.VarChar(128)
+  virtualMaskedNumber String?      @db.VarChar(32)
+  status              String       @default("INITIATED") @db.VarChar(32)
+  durationSeconds     Int          @default(0)
+  createdAt           DateTime     @default(now())
+  updatedAt           DateTime     @updatedAt
+
+  job                 Job?         @relation(fields: [jobId], references: [id], onDelete: SetNull)
+  requirement         Requirement? @relation(fields: [requirementId], references: [id], onDelete: SetNull)
+
+  @@index([jobId])
+  @@index([requirementId])
+}
+
+// ---------------------------------------------------------
+// 10. Promotions, Reviews & Disputes
+// ---------------------------------------------------------
+
+model Promotion {
+  id                    String                 @id @default(uuid()) @db.VarChar(36)
+  professionalProfileId String                 @db.VarChar(36)
+  promotionCampaignId   String?                @db.VarChar(36)
+  type                  String                 @db.VarChar(32)
+  startsAt              DateTime
+  endsAt                DateTime
+  status                String                 @default("ACTIVE") @db.VarChar(32)
+  createdAt             DateTime               @default(now())
+
+  professional          ProfessionalProfile    @relation(fields: [professionalProfileId], references: [id], onDelete: Cascade)
+  campaign              PromotionCampaign?     @relation(fields: [promotionCampaignId], references: [id], onDelete: SetNull)
+  placements            PromotionPlacement[]
+  transactions          PromotionTransaction[]
+
+  @@index([professionalProfileId])
+  @@index([status])
+}
+
+model PromotionCampaign {
+  id          String      @id @default(uuid()) @db.VarChar(36)
+  name        String      @db.VarChar(100)
+  description String?     @db.Text
+  discountPct Decimal     @default(0.0) @db.Decimal(5, 2)
+  startsAt    DateTime
+  endsAt      DateTime
+  isActive    Boolean     @default(true)
+  createdAt   DateTime    @default(now())
+
+  promotions  Promotion[]
+}
+
+model PromotionPlacement {
+  id          String    @id @default(uuid()) @db.VarChar(36)
+  promotionId String    @db.VarChar(36)
+  placement   String    @db.VarChar(32)
+  createdAt   DateTime  @default(now())
+
+  promotion   Promotion @relation(fields: [promotionId], references: [id], onDelete: Cascade)
+
+  @@index([promotionId])
+}
+
+model PromotionTransaction {
+  id          String    @id @default(uuid()) @db.VarChar(36)
+  promotionId String    @db.VarChar(36)
+  amountPaid  Decimal   @db.Decimal(12, 2)
+  currency    String    @default("INR") @db.VarChar(3)
+  createdAt   DateTime  @default(now())
+
+  promotion   Promotion @relation(fields: [promotionId], references: [id], onDelete: Cascade)
+
+  @@index([promotionId])
+}
+
+model Review {
+  id                    String              @id @default(uuid()) @db.VarChar(36)
+  jobId                 String              @unique @db.VarChar(36)
+  customerId            String              @db.VarChar(36)
+  professionalProfileId String              @db.VarChar(36)
+  rating                Int                 // 1 to 5
+  comment               String?             @db.Text
+  tags                  String?             @db.VarChar(255)
+  responseComment       String?             @db.Text
+  moderationStatus      String              @default("APPROVED") @db.VarChar(32)
+  createdAt             DateTime            @default(now())
+  updatedAt             DateTime            @updatedAt
+
+  job                   Job                 @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  customer              CustomerProfile     @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  professional          ProfessionalProfile @relation(fields: [professionalProfileId], references: [id], onDelete: Cascade)
+
+  @@index([professionalProfileId])
+  @@index([rating])
+}
+
+model Dispute {
+  id              String                 @id @default(uuid()) @db.VarChar(36)
+  jobId           String                 @db.VarChar(36)
+  raisedByUserId  String                 @db.VarChar(36)
+  reason          String                 @db.Text
+  amountDisputed  Decimal                @db.Decimal(12, 2)
+  status          String                 @default("OPEN") @db.VarChar(32)
+  createdAt       DateTime               @default(now())
+  updatedAt       DateTime               @updatedAt
+
+  job             Job                    @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  raisedBy        User                   @relation("DisputeRaiser", fields: [raisedByUserId], references: [id])
+  evidences       DisputeEvidence[]
+  resolutions     DisputeResolution[]
+  statusHistory   DisputeStatusHistory[]
+
+  @@index([jobId])
+  @@index([status])
+}
+
+model DisputeEvidence {
+  id          String   @id @default(uuid()) @db.VarChar(36)
+  disputeId   String   @db.VarChar(36)
+  userId      String   @db.VarChar(36)
+  fileUrl     String   @db.VarChar(512)
+  description String?  @db.Text
+  createdAt   DateTime @default(now())
+
+  dispute     Dispute  @relation(fields: [disputeId], references: [id], onDelete: Cascade)
+  submittedBy User     @relation("EvidenceSubmitter", fields: [userId], references: [id])
+
+  @@index([disputeId])
+}
+
+model DisputeResolution {
+  id                String   @id @default(uuid()) @db.VarChar(36)
+  disputeId         String   @db.VarChar(36)
+  resolutionOutcome String   @db.VarChar(32)
+  refundAmount      Decimal  @default(0.0) @db.Decimal(12, 2)
+  notes             String   @db.Text
+  arbitratedByUserId String? @db.VarChar(36)
+  createdAt         DateTime @default(now())
+
+  dispute           Dispute  @relation(fields: [disputeId], references: [id], onDelete: Cascade)
+
+  @@index([disputeId])
+}
+
+model DisputeStatusHistory {
+  id              String   @id @default(uuid()) @db.VarChar(36)
+  disputeId       String   @db.VarChar(36)
+  previousStatus  String?  @db.VarChar(32)
+  newStatus       String   @db.VarChar(32)
+  changedByUserId String?  @db.VarChar(36)
+  reason          String?  @db.VarChar(255)
+  createdAt       DateTime @default(now())
+
+  dispute         Dispute  @relation(fields: [disputeId], references: [id], onDelete: Cascade)
+
+  @@index([disputeId])
+}
+
+// ---------------------------------------------------------
+// 11. Notifications, Dynamic Settings & System Auditing
+// ---------------------------------------------------------
+
+model Notification {
+  id        String   @id @default(uuid()) @db.VarChar(36)
+  userId    String   @db.VarChar(36)
+  title     String   @db.VarChar(150)
+  message   String   @db.Text
+  type      String   @db.VarChar(50)
+  actionUrl String?  @db.VarChar(255)
+  isRead    Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([isRead])
+}
+
+model NotificationPreference {
+  id           String   @id @default(uuid()) @db.VarChar(36)
+  userId       String   @unique @db.VarChar(36)
+  emailEnabled Boolean  @default(true)
+  smsEnabled   Boolean  @default(true)
+  pushEnabled  Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model SystemSetting {
+  id              String   @id @default(uuid()) @db.VarChar(36)
+  key             String   @unique @db.VarChar(100)
+  value           String   @db.Text
+  type            String   @default("STRING") @db.VarChar(20)
+  description     String?  @db.VarChar(255)
+  updatedByUserId String?  @db.VarChar(36)
+  updatedAt       DateTime @updatedAt
+
+  updatedBy       User?    @relation("SettingUpdater", fields: [updatedByUserId], references: [id])
+
+  @@index([key])
+}
+
+model AuditLog {
+  id          String   @id @default(uuid()) @db.VarChar(36)
+  userId      String?  @db.VarChar(36)
+  action      String   @db.VarChar(100)
+  entityType  String?  @db.VarChar(50)
+  entityId    String?  @db.VarChar(36)
+  ipAddress   String?  @db.VarChar(45)
+  userAgent   String?  @db.VarChar(255)
+  metadata    String?  @db.Text // JSON string
+  createdAt   DateTime @default(now())
+
+  user        User?    @relation("UserAuditLogs", fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([action])
+  @@index([createdAt])
+}

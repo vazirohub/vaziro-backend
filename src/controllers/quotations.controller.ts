@@ -1,0 +1,302 @@
+import { Request, Response } from 'express';
+import { prisma } from '../lib/prisma';
+import { CreditService } from '../services/credit.service';
+import { AIMatchService } from '../services/ai-match.service';
+
+export class QuotationsController {
+  /**
+   * POST /api/v1/quotations/apply
+   */
+  static async submitQuotation(req: Request, res: Response) {
+    try {
+      const userId = req.user?.id;
+      if (!userId) {
+        return res.status(401).json({ success: false, error: { message: 'Unauthorized' } });
+      }
+
+      const {
+        requirementId,
+        proposedPrice,
+        timeline,
+        estimatedTimeline,
+        proposedStartDate,
+        message,
+        scope,
+        scopeSummary,
+        additionalCharges,
+        milestones,
+      } = req.body;
+
+      const effectiveTimeline = estimatedTimeline || timeline;
+      const effectiveScope = scopeSummary || scope;
+
+      if (!requirementId || !proposedPrice || !effectiveTimeline || !message) {
+        return res.status(400).json({
+          success: false,
+          error: { message: 'requirementId, proposedPrice, timeline, and message are mandatory.' },
+        });
+      }
+
+      const prof = await prisma.professionalProfile.findUnique({
+        where: { userId },
+        include: { user: true },
+      });
+
+      if (!prof) {
+        return res.status(403).json({
+          success: false,
+          error: { message: 'Only registered professionals can submit quotations.' },
+        });
+      }
+
+      const requirement = await prisma.requirement.findUnique({
+        where: { id: requirementId },
+      });
+
+      if (!requirement || !['PUBLISHED', 'RECEIVING_QUOTES'].includes(requirement.status)) {
+        return res.status(400).json({
+          success: false,
+          error: { message: 'This requirement is no longer accepting new quotations.' },
+        });
+      }
+
+      const existingApplication = await prisma.application.findUnique({
+        where: {
+          requirementId_professionalProfileId: {
+            requirementId,
+            professionalProfileId: prof.id,
+          },
+        },
+      });
+
+      if (existingApplication) {
+        return res.status(400).json({
+          success: false,
+          error: { message: 'You have already submitted an application for this requirement.' },
+        });
+      }
+
+      const creditCost = await CreditService.calculateFee(
+        requirement.budgetMin,
+        requirement.budgetMax
+      );
+
+      const result = await prisma.$transaction(async (tx) => {
+        const deduction = await CreditService.deductCreditsForApplication(
+          prof.id,
+          requirement.id,
+          creditCost
+        );
+
+        const application = await tx.application.create({
+          data: {
+            requirementId: requirement.id,
+            professionalProfileId: prof.id,
+            creditsSpent: creditCost,
+            status: 'SUBMITTED',
+          },
+        });
+
+        const quotation = await tx.quotation.create({
+          data: {
+            applicationId: application.id,
+            requirementId: requirement.id,
+            professionalProfileId: prof.id,
+            proposedPrice: Number(proposedPrice),
+            currency: 'INR',
+            estimatedTimeline: String(effectiveTimeline),
+            proposedStartDate: proposedStartDate ? new Date(proposedStartDate) : null,
+            message,
+            scopeSummary: effectiveScope || null,
+            additionalCharges: additionalCharges ? Number(additionalCharges) : 0,
+            status: 'SUBMITTED',
+            milestones: milestones && Array.isArray(milestones) && milestones.length > 0 ? {
+              create: milestones.map((m: any, idx: number) => ({
+                title: m.title || `Milestone ${idx + 1}`,
+                description: m.description || '',
+                amount: Number(m.amount),
+                dueDate: m.dueDate ? new Date(m.dueDate) : null,
+                status: 'PENDING',
+              })),
+            } : undefined,
+          },
+          include: {
+            milestones: true,
+          },
+        });
+
+        return {
+          quotation,
+          application,
+          creditsDeducted: creditCost,
+          remainingBalance: deduction.balanceRemaining,
+        };
+      });
+
+      return res.status(201).json({
+        success: true,
+        message: `Quotation submitted successfully. ${result.creditsDeducted} credits deducted.`,
+        data: result,
+      });
+    } catch (error: any) {
+      return res.status(400).json({
+        success: false,
+        error: { message: error.message || 'Failed to submit quotation' },
+      });
+    }
+  }
+
+  /**
+   * GET /api/v1/quotations/requirement/:requirementId
+   */
+  static async getQuotationsForRequirement(req: Request, res: Response) {
+    try {
+      const { requirementId } = req.params;
+
+      const requirement = await prisma.requirement.findUnique({
+        where: { id: requirementId },
+        include: {
+          category: true,
+          subcategory: true,
+          city: true,
+        },
+      });
+
+      if (!requirement) {
+        return res.status(404).json({ success: false, error: { message: 'Requirement not found' } });
+      }
+
+      const quotations = await prisma.quotation.findMany({
+        where: { requirementId },
+        include: {
+          professional: {
+            include: {
+              user: {
+                select: {
+                  firstName: true,
+                  lastName: true,
+                  createdAt: true,
+                },
+              },
+              verification: true,
+              skills: {
+                include: { skill: true },
+              },
+            },
+          },
+          milestones: true,
+        },
+        orderBy: { createdAt: 'desc' },
+      });
+
+      const enriched = quotations.map((q) => {
+        const matchResult = AIMatchService.calculateMatchScore(requirement, q.professional);
+        return {
+          ...q,
+          timeline: q.estimatedTimeline,
+          aiMatch: matchResult,
+        };
+      });
+
+      return res.status(200).json({
+        success: true,
+        data: enriched,
+      });
+    } catch (error: any) {
+      return res.status(500).json({
+        success: false,
+        error: { message: error.message || 'Failed to fetch quotations' },
+      });
+    }
+  }
+
+  /**
+   * PATCH /api/v1/quotations/:id/shortlist
+   */
+  static async shortlistQuotation(req: Request, res: Response) {
+    try {
+      const { id } = req.params;
+
+      const quotation = await prisma.quotation.update({
+        where: { id },
+        data: { status: 'SHORTLISTED' },
+      });
+
+      return res.status(200).json({
+        success: true,
+        message: 'Quotation shortlisted',
+        data: quotation,
+      });
+    } catch (error: any) {
+      return res.status(500).json({
+        success: false,
+        error: { message: error.message || 'Failed to shortlist quotation' },
+      });
+    }
+  }
+
+  /**
+   * PATCH /api/v1/quotations/:id/reject
+   */
+  static async rejectQuotation(req: Request, res: Response) {
+    try {
+      const { id } = req.params;
+
+      const quotation = await prisma.quotation.update({
+        where: { id },
+        data: { status: 'REJECTED' },
+      });
+
+      return res.status(200).json({
+        success: true,
+        message: 'Quotation rejected',
+        data: quotation,
+      });
+    } catch (error: any) {
+      return res.status(500).json({
+        success: false,
+        error: { message: error.message || 'Failed to reject quotation' },
+      });
+    }
+  }
+
+  /**
+   * GET /api/v1/quotations/my
+   */
+  static async getMyQuotations(req: Request, res: Response) {
+    try {
+      const userId = req.user?.id;
+      const prof = await prisma.professionalProfile.findUnique({
+        where: { userId },
+      });
+
+      if (!prof) {
+        return res.status(200).json({ success: true, data: [] });
+      }
+
+      const quotations = await prisma.quotation.findMany({
+        where: { professionalProfileId: prof.id },
+        include: {
+          requirement: {
+            include: { category: true, city: true },
+          },
+          milestones: true,
+        },
+        orderBy: { createdAt: 'desc' },
+      });
+
+      return res.status(200).json({
+        success: true,
+        data: quotations.map((q) => ({
+          ...q,
+          timeline: q.estimatedTimeline,
+        })),
+      });
+    } catch (error: any) {
+      return res.status(500).json({
+        success: false,
+        error: { message: error.message || 'Failed to fetch professional quotations' },
+      });
+    }
+  }
+}
