@@ -2,8 +2,9 @@
 const path = require('path');
 const fs = require('fs');
 
+const dbPath = path.resolve(__dirname, 'prisma', 'dev.db');
 if (!process.env.DATABASE_URL) {
-  process.env.DATABASE_URL = 'file:./dev.db';
+  process.env.DATABASE_URL = `file:${dbPath}`;
 }
 
 const distServer = path.join(__dirname, 'dist', 'server.js');

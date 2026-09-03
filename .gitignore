@@ -1,13 +1,9 @@
 node_modules/
-dist/
 build/
 .env
 .env.*
 *.env
-dev.db
 dev.db-journal
-*.sqlite
-*.sqlite3
 coverage/
 *.log
 npm-debug.log*

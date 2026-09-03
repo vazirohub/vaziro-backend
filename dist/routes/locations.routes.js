@@ -1,0 +1,10 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+const express_1 = require("express");
+const locations_controller_1 = require("../controllers/locations.controller");
+const router = (0, express_1.Router)();
+router.get('/states', locations_controller_1.LocationsController.getStates);
+router.get('/cities', locations_controller_1.LocationsController.getCities);
+router.get('/areas', locations_controller_1.LocationsController.getAreas);
+router.get('/pincodes', locations_controller_1.LocationsController.getPincodes);
+exports.default = router;
