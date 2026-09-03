@@ -68,15 +68,47 @@ async function main() {
       ],
     },
     {
-      name: 'Delhi NCR',
-      code: 'DL',
+      name: 'National Capital Region',
+      code: 'NCR',
       cities: [
         {
-          name: 'New Delhi',
-          slug: 'new-delhi',
+          name: 'Delhi',
+          slug: 'delhi',
           areas: [
             { name: 'Connaught Place', locality: 'Central Delhi', pincodes: [{ pincode: '110001', lat: 28.6315, lng: 77.2167 }] },
-            { name: 'Hauz Khas', locality: 'South Delhi', pincodes: [{ pincode: '110016', lat: 28.5494, lng: 77.2001 }] },
+            { name: 'Hauz Khas / GK', locality: 'South Delhi', pincodes: [{ pincode: '110016', lat: 28.5494, lng: 77.2001 }] },
+          ],
+        },
+        {
+          name: 'Noida',
+          slug: 'noida',
+          areas: [
+            { name: 'Sector 18 / Atta', locality: 'Central Noida', pincodes: [{ pincode: '201301', lat: 28.5708, lng: 77.3271 }] },
+            { name: 'Sector 62', locality: 'Noida Electronic City', pincodes: [{ pincode: '201309', lat: 28.6279, lng: 77.3732 }] },
+          ],
+        },
+        {
+          name: 'Gurugram',
+          slug: 'gurugram',
+          areas: [
+            { name: 'Cyber City / DLF', locality: 'East Gurugram', pincodes: [{ pincode: '122002', lat: 28.4900, lng: 77.0900 }] },
+            { name: 'Golf Course Road', locality: 'South Gurugram', pincodes: [{ pincode: '122003', lat: 28.4400, lng: 77.1000 }] },
+          ],
+        },
+        {
+          name: 'Ghaziabad',
+          slug: 'ghaziabad',
+          areas: [
+            { name: 'Indirapuram', locality: 'Trans-Hindon Ghaziabad', pincodes: [{ pincode: '201014', lat: 28.6400, lng: 77.3700 }] },
+            { name: 'Vaishali', locality: 'Ghaziabad NCR', pincodes: [{ pincode: '201010', lat: 28.6500, lng: 77.3400 }] },
+          ],
+        },
+        {
+          name: 'Greater Noida',
+          slug: 'greater-noida',
+          areas: [
+            { name: 'Pari Chowk', locality: 'Alpha 1 / Beta', pincodes: [{ pincode: '201310', lat: 28.4700, lng: 77.5000 }] },
+            { name: 'Knowledge Park', locality: 'Greater Noida West', pincodes: [{ pincode: '201306', lat: 28.4600, lng: 77.4900 }] },
           ],
         },
       ],
