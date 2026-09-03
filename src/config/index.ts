@@ -27,10 +27,14 @@ export const config = {
   },
   providers: {
     sms: process.env.SMS_PROVIDER || 'MOCK',
-    payment: process.env.PAYMENT_PROVIDER || 'MOCK',
+    payment: process.env.PAYMENT_PROVIDER || 'RAZORPAY',
     calling: process.env.CALL_PROVIDER || 'MOCK',
     verification: process.env.VERIFICATION_PROVIDER || 'DIGILOCKER_MOCK',
     ai: process.env.AI_PROVIDER || 'MOCK',
     map: process.env.MAP_PROVIDER || 'MOCK',
+  },
+  razorpay: {
+    keyId: process.env.RAZORPAY_KEY_ID || 'rzp_test_TXUMkPL4NOggA7',
+    keySecret: process.env.RAZORPAY_KEY_SECRET || 'GN3Bnpmr9AfoNPZNi4BszvxL',
   },
 };

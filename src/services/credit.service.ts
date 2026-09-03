@@ -194,7 +194,7 @@ export class CreditService {
   /**
    * Purchase a credit plan
    */
-  static async purchasePlan(professionalProfileId: string, planId: string) {
+  static async purchasePlan(professionalProfileId: string, planId: string, customPaymentId?: string) {
     return await prisma.$transaction(async (tx) => {
       const plan = await tx.creditPlan.findUnique({
         where: { id: planId },
@@ -237,7 +237,7 @@ export class CreditService {
           creditsAwarded: plan.creditsCount,
           currency: 'INR',
           status: 'COMPLETED',
-          paymentId: `pay_mock_${Date.now()}`,
+          paymentId: customPaymentId || `pay_rzp_${Date.now()}`,
         },
       });
 

@@ -10,4 +10,6 @@ router.post('/calculate-fee', credits_controller_1.CreditsController.calculateFe
 // Professional credit wallet management
 router.get('/wallet', auth_middleware_1.authenticate, (0, auth_middleware_1.requireRoles)('PROFESSIONAL', 'ADMIN', 'SUPER_ADMIN'), credits_controller_1.CreditsController.getWallet);
 router.post('/purchase', auth_middleware_1.authenticate, (0, auth_middleware_1.requireRoles)('PROFESSIONAL', 'ADMIN', 'SUPER_ADMIN'), credits_controller_1.CreditsController.purchasePlan);
+router.post('/create-order', auth_middleware_1.authenticate, (0, auth_middleware_1.requireRoles)('PROFESSIONAL', 'ADMIN', 'SUPER_ADMIN'), credits_controller_1.CreditsController.createOrder);
+router.post('/verify-payment', auth_middleware_1.authenticate, (0, auth_middleware_1.requireRoles)('PROFESSIONAL', 'ADMIN', 'SUPER_ADMIN'), credits_controller_1.CreditsController.verifyPayment);
 exports.default = router;
