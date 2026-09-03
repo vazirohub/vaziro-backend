@@ -21,8 +21,18 @@ const verifyOtpSchema = z.object({
 });
 
 const loginSchema = z.object({
-  email: z.string().email(),
-  password: z.string().min(6),
+  identifier: z.string().optional(),
+  email: z.string().optional(),
+  phone: z.string().optional(),
+  password: z.string().min(4, 'Password must be at least 4 characters.'),
+});
+
+const registerSchema = z.object({
+  name: z.string().min(2, 'Name is required and must have at least 2 characters.'),
+  phone: z.string().min(10, 'Valid 10-digit Indian mobile number is required.'),
+  email: z.string().email().optional().or(z.literal('')),
+  password: z.string().min(6, 'Password must be at least 6 characters.'),
+  role: z.enum(['CUSTOMER', 'PROFESSIONAL']).default('CUSTOMER'),
 });
 
 export class AuthController {
@@ -159,10 +169,19 @@ export class AuthController {
 
   static async login(req: Request, res: Response, next: NextFunction) {
     try {
-      const { email, password } = loginSchema.parse(req.body);
+      const body = loginSchema.parse(req.body);
+      const rawIdentifier = (body.identifier || body.email || body.phone || '').trim();
+      const cleanDigits = rawIdentifier.replace(/\D/g, '');
+      const formattedPhone = cleanDigits.length === 10 ? `+91${cleanDigits}` : rawIdentifier;
 
-      const user = await prisma.user.findUnique({
-        where: { email },
+      const user = await prisma.user.findFirst({
+        where: {
+          OR: [
+            { email: rawIdentifier.toLowerCase() },
+            { phone: rawIdentifier },
+            { phone: formattedPhone },
+          ],
+        },
         include: {
           roles: { include: { role: true } },
           customerProfile: true,
@@ -177,18 +196,18 @@ export class AuthController {
           success: false,
           error: {
             code: 'INVALID_CREDENTIALS',
-            message: 'Invalid email or password.',
+            message: 'Invalid mobile/email or password.',
           },
         });
       }
 
-      const isPasswordValid = await bcrypt.compare(password, user.passwordHash);
+      const isPasswordValid = await bcrypt.compare(body.password, user.passwordHash);
       if (!isPasswordValid) {
         return res.status(401).json({
           success: false,
           error: {
             code: 'INVALID_CREDENTIALS',
-            message: 'Invalid email or password.',
+            message: 'Invalid mobile/email or password.',
           },
         });
       }
@@ -202,6 +221,110 @@ export class AuthController {
       return res.status(200).json({
         success: true,
         message: 'Logged in successfully.',
+        data: {
+          accessToken,
+          user: {
+            id: user.id,
+            email: user.email,
+            phone: user.phone,
+            firstName: user.firstName,
+            lastName: user.lastName,
+            roles: user.roles.map((r) => r.role.name),
+            customerProfile: user.customerProfile,
+            professionalProfile: user.professionalProfile,
+          },
+        },
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  static async register(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { name, phone, email, password, role } = registerSchema.parse(req.body);
+
+      const cleanDigits = phone.replace(/\D/g, '');
+      const formattedPhone = cleanDigits.length === 10 ? `+91${cleanDigits}` : phone.trim();
+
+      // Check if user already exists
+      const existingUser = await prisma.user.findFirst({
+        where: {
+          OR: [
+            { phone: formattedPhone },
+            ...(email ? [{ email: email.toLowerCase().trim() }] : []),
+          ],
+        },
+      });
+
+      if (existingUser) {
+        return res.status(409).json({
+          success: false,
+          error: {
+            code: 'USER_EXISTS',
+            message: 'An account with this mobile number or email already exists. Please log in.',
+          },
+        });
+      }
+
+      // Name is strictly required
+      const nameParts = name.trim().split(/\s+/);
+      const firstName = nameParts[0];
+      const lastName = nameParts.slice(1).join(' ') || '';
+
+      const passwordHash = await bcrypt.hash(password, 10);
+
+      // Fetch role
+      const dbRole = await prisma.role.findUnique({
+        where: { name: role },
+      });
+
+      const user = await prisma.user.create({
+        data: {
+          phone: formattedPhone,
+          email: email ? email.toLowerCase().trim() : null,
+          firstName,
+          lastName,
+          passwordHash,
+          status: 'ACTIVE',
+          roles: dbRole ? { create: { roleId: dbRole.id } } : undefined,
+          ...(role === 'CUSTOMER'
+            ? {
+                customerProfile: {
+                  create: { trustScore: 100 },
+                },
+              }
+            : {
+                professionalProfile: {
+                  create: {
+                    creditWallet: {
+                      create: { balance: 10, lifetimePurchased: 10 },
+                    },
+                    verification: {
+                      create: { status: 'NOT_STARTED' },
+                    },
+                  },
+                },
+              }),
+        },
+        include: {
+          roles: { include: { role: true } },
+          customerProfile: true,
+          professionalProfile: {
+            include: { creditWallet: true, verification: true },
+          },
+        },
+      });
+
+      const accessToken = jwt.sign(
+        { userId: user.id },
+        config.jwt.secret,
+        { expiresIn: config.jwt.expiresIn as any }
+      );
+
+      return res.status(201).json({
+        success: true,
+        message: 'Account registered successfully.',
         data: {
           accessToken,
           user: {
