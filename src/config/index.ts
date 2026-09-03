@@ -36,5 +36,7 @@ export const config = {
   razorpay: {
     keyId: process.env.RAZORPAY_KEY_ID || 'rzp_test_TXUMkPL4NOggA7',
     keySecret: process.env.RAZORPAY_KEY_SECRET || 'GN3Bnpmr9AfoNPZNi4BszvxL',
+    webhookSecret: process.env.RAZORPAY_WEBHOOK_SECRET || 'Vazirohub',
+    environment: process.env.RAZORPAY_ENVIRONMENT || 'test',
   },
 };

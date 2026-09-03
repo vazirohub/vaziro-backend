@@ -26,10 +26,15 @@ app.use((0, cors_1.default)({
 if (process.env.NODE_ENV !== 'test') {
     app.use((0, morgan_1.default)('dev'));
 }
-// Request Parsers
-app.use(express_1.default.json({ limit: '10mb' }));
+// Request Parsers (capturing rawBody buffer for Razorpay cryptographic webhook verification)
+app.use(express_1.default.json({
+    limit: '10mb',
+    verify: (req, _res, buf) => {
+        req.rawBody = buf;
+    },
+}));
 app.use(express_1.default.urlencoded({ extended: true, limit: '10mb' }));
-// Global Rate Limiting (100 requests per 15 minutes per IP)
+// Global Rate Limiting (300 requests per 15 minutes per IP)
 const limiter = (0, express_rate_limit_1.default)({
     windowMs: 15 * 60 * 1000,
     max: 300,
@@ -46,6 +51,8 @@ const limiter = (0, express_rate_limit_1.default)({
 app.use('/api', limiter);
 // API Version 1 Routes
 app.use('/api/v1', routes_1.default);
+// Compatibility alias for payments endpoints & webhooks: /api/payments/...
+app.use('/api', routes_1.default);
 // 404 Route Handler
 app.use('*', (req, res) => {
     res.status(404).json({

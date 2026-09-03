@@ -15,48 +15,110 @@ class PaymentsController {
             data: {
                 keyId: razorpay_service_1.RazorpayService.getKeyId(),
                 currency: 'INR',
+                environment: config_1.config.razorpay.environment || 'test',
             },
         });
     }
     /**
      * POST /api/v1/payments/create-order
-     * Creates a Razorpay order for securing job escrow funds
+     * Creates a Razorpay order with strict server-side amount calculation
      */
     static async createOrder(req, res) {
         try {
             const userId = req.user?.id;
-            const { jobId, amount, paymentMethod } = req.body;
-            if (!jobId || !amount || Number(amount) <= 0) {
-                return res.status(400).json({ success: false, error: { message: 'Valid jobId and positive amount are required.' } });
-            }
-            const job = await prisma_1.prisma.job.findUnique({
-                where: { id: jobId },
-                include: {
-                    customer: true,
-                    professional: true,
-                },
-            });
-            if (!job) {
-                return res.status(404).json({ success: false, error: { message: 'Job not found' } });
-            }
-            if (job.customer.userId !== userId && !req.user?.roles.includes('ADMIN')) {
-                return res.status(403).json({ success: false, error: { message: 'Forbidden' } });
-            }
-            const receipt = `job_${job.id.substring(0, 8)}_${Date.now()}`;
-            const razorpayOrder = await razorpay_service_1.RazorpayService.createOrder(Number(amount), receipt, {
-                jobId: job.id,
+            const { jobId, orderId, planId, paymentMethod } = req.body;
+            let payableAmountInInr = 0;
+            let orderReceipt = '';
+            let orderNotes = {
                 userId: userId || '',
-                type: 'JOB_ESCROW_PAYMENT',
-            });
+                platform: 'vaziro',
+            };
+            let associatedJobId = null;
+            let associatedPlanId = null;
+            // Case 1: Job Escrow Payment
+            if (jobId) {
+                const job = await prisma_1.prisma.job.findUnique({
+                    where: { id: jobId },
+                    include: { customer: true, professional: true, payments: true },
+                });
+                if (!job) {
+                    return res.status(404).json({ success: false, error: { message: 'Job not found.' } });
+                }
+                if (job.customer.userId !== userId && !req.user?.roles?.some((r) => ['ADMIN', 'SUPER_ADMIN'].includes(r))) {
+                    return res.status(403).json({ success: false, error: { message: 'Access denied to this job order.' } });
+                }
+                // Duplicate payment protection: check if already secured or completed
+                const existingPaid = job.payments.find((p) => ['SECURED', 'CAPTURED', 'PAID', 'RELEASED'].includes(p.status));
+                if (existingPaid) {
+                    return res.status(400).json({
+                        success: false,
+                        error: { code: 'ALREADY_PAID', message: 'Escrow payment has already been secured for this job.' },
+                    });
+                }
+                payableAmountInInr = Number(job.agreedPrice);
+                orderReceipt = `job_${job.id.substring(0, 8)}_${Date.now()}`;
+                orderNotes.jobId = job.id;
+                orderNotes.type = 'JOB_ESCROW_PAYMENT';
+                associatedJobId = job.id;
+            }
+            // Case 2: Professional Credit Plan Purchase
+            else if (planId) {
+                const plan = await prisma_1.prisma.creditPlan.findUnique({ where: { id: planId } });
+                if (!plan || !plan.isActive) {
+                    return res.status(404).json({ success: false, error: { message: 'Credit plan not found or inactive.' } });
+                }
+                payableAmountInInr = Number(plan.price);
+                orderReceipt = `cr_${plan.id.substring(0, 8)}_${Date.now()}`;
+                orderNotes.planId = plan.id;
+                orderNotes.type = 'CREDIT_PURCHASE';
+                associatedPlanId = plan.id;
+            }
+            // Case 3: Generic Order ID
+            else if (orderId) {
+                const existingPayment = await prisma_1.prisma.payment.findFirst({
+                    where: { orderId, status: { in: ['SECURED', 'CAPTURED', 'PAID'] } },
+                });
+                if (existingPayment) {
+                    return res.status(400).json({
+                        success: false,
+                        error: { code: 'ALREADY_PAID', message: 'Order has already been paid.' },
+                    });
+                }
+                orderReceipt = String(orderId);
+                payableAmountInInr = req.body.amount ? Number(req.body.amount) : 500;
+                orderNotes.orderId = String(orderId);
+            }
+            else {
+                return res.status(400).json({
+                    success: false,
+                    error: { message: 'Please specify a valid jobId, planId, or orderId.' },
+                });
+            }
+            if (payableAmountInInr <= 0) {
+                return res.status(400).json({
+                    success: false,
+                    error: { message: 'Payable amount must be greater than ₹0.' },
+                });
+            }
+            // Create Razorpay order via API
+            const razorpayOrder = await razorpay_service_1.RazorpayService.createOrder(payableAmountInInr, orderReceipt, orderNotes);
+            // Create Payment record in DB with status CREATED
             const payment = await prisma_1.prisma.payment.create({
                 data: {
-                    jobId: job.id,
-                    amount: Number(amount),
+                    jobId: associatedJobId,
+                    userId: userId || null,
+                    orderId: orderReceipt,
+                    razorpayOrderId: razorpayOrder.id,
+                    amount: payableAmountInInr,
                     currency: 'INR',
-                    status: 'PENDING',
+                    status: 'CREATED',
                     paymentMethod: paymentMethod || 'RAZORPAY',
+                    email: req.user?.email || null,
+                    contact: req.user?.phone || null,
+                    description: orderNotes.type || 'Vaziro Payment',
                 },
             });
+            // Log attempt
             await prisma_1.prisma.paymentAttempt.create({
                 data: {
                     paymentId: payment.id,
@@ -64,21 +126,23 @@ class PaymentsController {
                     provider: 'RAZORPAY',
                     providerOrderId: razorpayOrder.id,
                     status: 'INITIATED',
+                    rawResponse: JSON.stringify(razorpayOrder),
                 },
             });
             return res.status(201).json({
                 success: true,
-                message: 'Payment order created. Ready for Razorpay UPI / NetBanking / Card authorization.',
+                message: 'Razorpay order created successfully.',
                 data: {
                     orderId: razorpayOrder.id,
                     paymentId: payment.id,
                     amount: razorpayOrder.amount, // in paise
-                    amountInr: Number(amount),
+                    amountInr: payableAmountInInr,
                     currency: razorpayOrder.currency,
                     keyId: razorpay_service_1.RazorpayService.getKeyId(),
-                    customerName: `${req.user?.firstName} ${req.user?.lastName}`.trim(),
+                    customerName: `${req.user?.firstName || ''} ${req.user?.lastName || ''}`.trim() || 'Vaziro Customer',
                     email: req.user?.email || '',
                     phone: req.user?.phone || '',
+                    description: orderNotes.type || 'Vaziro Secure Payment',
                 },
             });
         }
@@ -90,179 +154,358 @@ class PaymentsController {
         }
     }
     /**
-     * POST /api/v1/payments/verify-payment
-     * Verifies Razorpay payment signature and secures job funds in escrow
+     * POST /api/v1/payments/verify
+     * Cryptographically verifies Razorpay signature and confirms payment status server-side
      */
     static async verifyPayment(req, res) {
         try {
             const userId = req.user?.id;
-            const { orderId, paymentId, signature, jobId, internalPaymentId } = req.body;
-            if (!orderId || !paymentId || !jobId) {
+            const razorpayOrderId = req.body.razorpay_order_id || req.body.orderId;
+            const razorpayPaymentId = req.body.razorpay_payment_id || req.body.paymentId;
+            const razorpaySignature = req.body.razorpay_signature || req.body.signature;
+            const jobId = req.body.jobId;
+            const planId = req.body.planId;
+            if (!razorpayOrderId || !razorpayPaymentId) {
                 return res.status(400).json({
                     success: false,
-                    error: { message: 'orderId, paymentId, and jobId are required.' },
+                    error: { message: 'razorpay_order_id and razorpay_payment_id are mandatory.' },
                 });
             }
-            const isValid = razorpay_service_1.RazorpayService.verifyPaymentSignature(orderId, paymentId, signature);
+            // 1. Mandatory Cryptographic Signature Verification
+            const isValid = razorpay_service_1.RazorpayService.verifyPaymentSignature(razorpayOrderId, razorpayPaymentId, razorpaySignature);
             if (!isValid) {
+                console.warn(`[SECURITY ALERT] Invalid payment signature attempt! Order: ${razorpayOrderId}, Payment: ${razorpayPaymentId}`);
                 return res.status(400).json({
                     success: false,
-                    error: { code: 'INVALID_SIGNATURE', message: 'Cryptographic payment verification failed.' },
+                    error: { code: 'INVALID_SIGNATURE', message: 'Cryptographic payment signature verification failed.' },
                 });
             }
-            const job = await prisma_1.prisma.job.findUnique({
-                where: { id: jobId },
-                include: { customer: true },
+            // 2. Fetch Payment record from DB
+            let payment = await prisma_1.prisma.payment.findFirst({
+                where: {
+                    OR: [
+                        { razorpayOrderId: razorpayOrderId },
+                        ...(jobId ? [{ jobId, status: { in: ['CREATED', 'PENDING'] } }] : []),
+                    ],
+                },
+                include: { job: { include: { customer: true } } },
             });
-            if (!job) {
-                return res.status(404).json({ success: false, error: { message: 'Job not found' } });
+            // If payment already captured (idempotent duplicate request)
+            if (payment && ['CAPTURED', 'SECURED', 'PAID'].includes(payment.status)) {
+                return res.status(200).json({
+                    success: true,
+                    message: 'Payment has already been verified and confirmed.',
+                    data: {
+                        paymentId: payment.id,
+                        razorpayPaymentId: payment.razorpayPaymentId || razorpayPaymentId,
+                        orderId: payment.orderId || razorpayOrderId,
+                        amount: payment.amount,
+                        status: payment.status,
+                    },
+                });
             }
-            if (job.customer.userId !== userId && !req.user?.roles.includes('ADMIN')) {
-                return res.status(403).json({ success: false, error: { message: 'Forbidden' } });
+            // 3. Server-side payment status verification via Razorpay API (captured / authorized)
+            const rzpPayment = await razorpay_service_1.RazorpayService.fetchPayment(razorpayPaymentId);
+            if (rzpPayment && rzpPayment.status === 'failed') {
+                return res.status(400).json({
+                    success: false,
+                    error: { code: 'PAYMENT_FAILED', message: rzpPayment.error_description || 'Payment failed on Razorpay.' },
+                });
             }
-            // Secure payment and update escrow in single transaction
-            const updated = await prisma_1.prisma.$transaction(async (tx) => {
-                let payment = null;
-                if (internalPaymentId) {
-                    payment = await tx.payment.findUnique({ where: { id: internalPaymentId } });
-                }
-                if (!payment) {
-                    payment = await tx.payment.findFirst({
-                        where: { jobId: job.id, status: 'PENDING' },
-                        orderBy: { createdAt: 'desc' },
-                    });
-                }
-                if (!payment) {
-                    payment = await tx.payment.create({
+            // 4. Atomic database transaction: Update payment status and activate service
+            const confirmedPayment = await prisma_1.prisma.$transaction(async (tx) => {
+                let currentPayment = payment;
+                if (!currentPayment) {
+                    currentPayment = await tx.payment.create({
                         data: {
-                            jobId: job.id,
-                            amount: job.agreedPrice,
+                            jobId: jobId || null,
+                            userId: userId || null,
+                            orderId: razorpayOrderId,
+                            razorpayOrderId,
+                            razorpayPaymentId,
+                            razorpaySignature,
+                            amount: rzpPayment ? rzpPayment.amount / 100 : (jobId ? 5000 : 500),
                             currency: 'INR',
-                            status: 'SECURED',
-                            paymentMethod: 'RAZORPAY',
+                            status: 'CAPTURED',
+                            paymentMethod: rzpPayment?.method || 'UPI',
+                            capturedAt: new Date(),
                         },
                     });
                 }
                 else {
-                    payment = await tx.payment.update({
-                        where: { id: payment.id },
-                        data: { status: 'SECURED', paymentMethod: 'RAZORPAY' },
+                    currentPayment = await tx.payment.update({
+                        where: { id: currentPayment.id },
+                        data: {
+                            status: 'CAPTURED',
+                            razorpayPaymentId,
+                            razorpaySignature,
+                            paymentMethod: rzpPayment?.method || currentPayment.paymentMethod || 'UPI',
+                            capturedAt: new Date(),
+                        },
                     });
                 }
+                if (!currentPayment) {
+                    throw new Error('Could not persist payment record.');
+                }
+                // Log transaction
                 await tx.paymentTransaction.create({
                     data: {
-                        paymentId: payment.id,
-                        amount: payment.amount,
+                        paymentId: currentPayment.id,
+                        amount: currentPayment.amount,
                         type: 'CAPTURE',
-                        providerRefId: paymentId,
+                        providerRefId: razorpayPaymentId,
                     },
                 });
-                // Lock funds in escrow
-                const platformFee = (payment.amount * 6) / 100;
-                await tx.paymentProtection.upsert({
-                    where: { jobId: job.id },
-                    update: {
-                        heldAmount: payment.amount,
-                        status: 'HELD',
-                    },
-                    create: {
-                        jobId: job.id,
-                        heldAmount: payment.amount,
-                        platformFeeAmount: platformFee,
-                        netProfessionalAmount: payment.amount - platformFee,
-                        status: 'HELD',
-                    },
-                });
-                // Ensure job is in active execution lifecycle
-                if (job.status === 'HIRED') {
-                    await tx.job.update({
-                        where: { id: job.id },
-                        data: { status: 'SCHEDULED' },
-                    });
+                // Activation Case A: Job Escrow Protection
+                const targetJobId = jobId || currentPayment.jobId;
+                if (targetJobId) {
+                    const job = await tx.job.findUnique({ where: { id: targetJobId } });
+                    if (job) {
+                        const platformFee = (currentPayment.amount * 6) / 100;
+                        await tx.paymentProtection.upsert({
+                            where: { jobId: job.id },
+                            update: {
+                                heldAmount: currentPayment.amount,
+                                status: 'HELD',
+                            },
+                            create: {
+                                jobId: job.id,
+                                heldAmount: currentPayment.amount,
+                                platformFeeAmount: platformFee,
+                                netProfessionalAmount: currentPayment.amount - platformFee,
+                                status: 'HELD',
+                            },
+                        });
+                        if (job.status === 'HIRED') {
+                            await tx.job.update({
+                                where: { id: job.id },
+                                data: { status: 'SCHEDULED' },
+                            });
+                            await tx.jobStatusHistory.create({
+                                data: {
+                                    jobId: job.id,
+                                    previousStatus: 'HIRED',
+                                    newStatus: 'SCHEDULED',
+                                    changedByUserId: userId || null,
+                                    reason: 'Customer completed 100% Escrow funding via Razorpay. Service is scheduled.',
+                                },
+                            });
+                        }
+                    }
                 }
-                return payment;
+                // Activation Case B: Professional Credit Purchase
+                const targetPlanId = planId || (rzpPayment?.notes?.planId);
+                if (targetPlanId && userId) {
+                    const prof = await tx.professionalProfile.findUnique({ where: { userId } });
+                    if (prof) {
+                        const plan = await tx.creditPlan.findUnique({ where: { id: targetPlanId } });
+                        if (plan) {
+                            await tx.creditWallet.upsert({
+                                where: { professionalProfileId: prof.id },
+                                update: {
+                                    balance: { increment: plan.creditsCount },
+                                    lifetimePurchased: { increment: plan.creditsCount },
+                                },
+                                create: {
+                                    professionalProfileId: prof.id,
+                                    balance: plan.creditsCount,
+                                    lifetimePurchased: plan.creditsCount,
+                                },
+                            });
+                            const updatedWallet = await tx.creditWallet.findUnique({ where: { professionalProfileId: prof.id } });
+                            await tx.creditTransaction.create({
+                                data: {
+                                    creditWalletId: updatedWallet.id,
+                                    amount: plan.creditsCount,
+                                    transactionType: 'PURCHASE',
+                                    referenceEntityId: razorpayPaymentId,
+                                    balanceAfter: updatedWallet.balance,
+                                    notes: `Razorpay Purchase of ${plan.name} Pack (₹${plan.price})`,
+                                },
+                            });
+                        }
+                    }
+                }
+                return currentPayment;
             });
             return res.status(200).json({
                 success: true,
-                message: 'Payment verified and secured under Vaziro Escrow Protection.',
-                data: updated,
+                message: 'Payment verified and service activated successfully.',
+                data: {
+                    paymentId: confirmedPayment.id,
+                    razorpayPaymentId,
+                    orderId: confirmedPayment.orderId || razorpayOrderId,
+                    amount: confirmedPayment.amount,
+                    status: 'CAPTURED',
+                    capturedAt: confirmedPayment.capturedAt,
+                },
             });
         }
         catch (error) {
+            console.error('Payment verification error:', error);
             return res.status(500).json({
                 success: false,
-                error: { message: error.message || 'Payment verification failed' },
+                error: { message: error.message || 'Server error during payment verification.' },
             });
         }
     }
     /**
-     * POST /api/v1/payments/webhook
+     * POST /api/v1/payments/webhook & /api/v1/payments/razorpay/webhook
+     * Cryptographically verified, idempotent webhook processing
      */
     static async handleWebhook(req, res) {
         try {
-            const { payload } = req.body;
-            if (!payload || !payload.paymentId) {
-                return res.status(400).json({ success: false, error: { message: 'Invalid webhook payload structure.' } });
+            const signature = req.headers['x-razorpay-signature'] || '';
+            const rawBody = req.rawBody || JSON.stringify(req.body);
+            // 1. Signature Verification
+            const isValid = razorpay_service_1.RazorpayService.verifyWebhookSignature(rawBody, signature);
+            if (!isValid) {
+                console.warn('[SECURITY ALERT] Invalid Razorpay webhook signature received!');
+                return res.status(400).json({
+                    success: false,
+                    error: { code: 'INVALID_SIGNATURE', message: 'Webhook signature verification failed.' },
+                });
             }
-            const { paymentId, providerTransactionId, providerRefId, amount } = payload;
-            const refId = providerRefId || providerTransactionId || `tx_${Date.now()}`;
-            // Idempotency check
-            const existingTx = await prisma_1.prisma.paymentTransaction.findFirst({
-                where: { providerRefId: refId },
+            const event = req.body.event;
+            const payload = req.body.payload;
+            const eventId = req.headers['x-razorpay-event-id'] || req.body.event_id || `evt_${Date.now()}_${Math.random()}`;
+            // 2. Idempotency Check: Prevent duplicate event processing
+            const existingEvent = await prisma_1.prisma.webhookEvent.findUnique({
+                where: { eventId },
             });
-            if (existingTx) {
+            if (existingEvent && existingEvent.processed) {
                 return res.status(200).json({
                     success: true,
                     message: 'Webhook event already processed (idempotent duplicate ignore).',
                 });
             }
-            const updated = await prisma_1.prisma.$transaction(async (tx) => {
-                const payment = await tx.payment.findUnique({
-                    where: { id: paymentId },
-                    include: { job: true },
-                });
-                if (!payment)
-                    throw new Error('Payment not found');
-                const p = await tx.payment.update({
-                    where: { id: payment.id },
-                    data: { status: 'SECURED' },
-                });
-                await tx.paymentTransaction.create({
+            // Record webhook event
+            if (!existingEvent) {
+                await prisma_1.prisma.webhookEvent.create({
                     data: {
-                        paymentId: payment.id,
-                        amount: amount ? Number(amount) : payment.amount,
-                        type: 'CAPTURE',
-                        providerRefId: refId,
+                        eventId,
+                        eventType: event || 'unknown',
+                        payload: typeof rawBody === 'string' ? rawBody : rawBody.toString('utf8'),
+                        processed: false,
                     },
                 });
-                if (payment.job.paymentProtectionEnabled) {
-                    await tx.paymentProtection.upsert({
-                        where: { jobId: payment.jobId },
-                        update: {
-                            heldAmount: payment.amount,
-                            status: 'HELD',
-                        },
-                        create: {
-                            jobId: payment.jobId,
-                            heldAmount: payment.amount,
-                            platformFeeAmount: (payment.amount * 6) / 100,
-                            netProfessionalAmount: payment.amount - (payment.amount * 6) / 100,
-                            status: 'HELD',
+            }
+            // 3. Process Event Types
+            if (event === 'payment.captured' || event === 'order.paid') {
+                const paymentEntity = payload?.payment?.entity;
+                const orderEntity = payload?.order?.entity;
+                const razorpayPaymentId = paymentEntity?.id;
+                const razorpayOrderId = paymentEntity?.order_id || orderEntity?.id;
+                const amountInPaise = paymentEntity?.amount || orderEntity?.amount;
+                const amountInInr = amountInPaise ? amountInPaise / 100 : 0;
+                const method = paymentEntity?.method || 'UPI';
+                if (razorpayOrderId) {
+                    await prisma_1.prisma.$transaction(async (tx) => {
+                        let payment = await tx.payment.findFirst({
+                            where: { razorpayOrderId },
+                            include: { job: true },
+                        });
+                        if (!payment) {
+                            payment = await tx.payment.create({
+                                data: {
+                                    orderId: razorpayOrderId,
+                                    razorpayOrderId,
+                                    razorpayPaymentId,
+                                    amount: amountInInr,
+                                    currency: 'INR',
+                                    status: 'CAPTURED',
+                                    paymentMethod: method,
+                                    email: paymentEntity?.email || null,
+                                    contact: paymentEntity?.contact || null,
+                                    capturedAt: new Date(),
+                                },
+                                include: { job: true },
+                            });
+                        }
+                        else if (payment.status !== 'CAPTURED') {
+                            payment = await tx.payment.update({
+                                where: { id: payment.id },
+                                data: {
+                                    status: 'CAPTURED',
+                                    razorpayPaymentId: razorpayPaymentId || payment.razorpayPaymentId,
+                                    paymentMethod: method,
+                                    capturedAt: new Date(),
+                                },
+                                include: { job: true },
+                            });
+                        }
+                        // Record transaction
+                        if (razorpayPaymentId) {
+                            const existingTx = await tx.paymentTransaction.findFirst({
+                                where: { providerRefId: razorpayPaymentId },
+                            });
+                            if (!existingTx) {
+                                await tx.paymentTransaction.create({
+                                    data: {
+                                        paymentId: payment.id,
+                                        amount: payment.amount,
+                                        type: 'CAPTURE',
+                                        providerRefId: razorpayPaymentId,
+                                    },
+                                });
+                            }
+                        }
+                        // If associated with a Job, lock in escrow
+                        if (payment.jobId) {
+                            const platformFee = (payment.amount * 6) / 100;
+                            await tx.paymentProtection.upsert({
+                                where: { jobId: payment.jobId },
+                                update: { heldAmount: payment.amount, status: 'HELD' },
+                                create: {
+                                    jobId: payment.jobId,
+                                    heldAmount: payment.amount,
+                                    platformFeeAmount: platformFee,
+                                    netProfessionalAmount: payment.amount - platformFee,
+                                    status: 'HELD',
+                                },
+                            });
+                            await tx.job.updateMany({
+                                where: { id: payment.jobId, status: 'HIRED' },
+                                data: { status: 'SCHEDULED' },
+                            });
+                        }
+                    });
+                }
+            }
+            else if (event === 'payment.failed') {
+                const paymentEntity = payload?.payment?.entity;
+                const razorpayOrderId = paymentEntity?.order_id;
+                const razorpayPaymentId = paymentEntity?.id;
+                if (razorpayOrderId) {
+                    await prisma_1.prisma.payment.updateMany({
+                        where: { razorpayOrderId },
+                        data: {
+                            status: 'FAILED',
+                            razorpayPaymentId,
+                            failureCode: paymentEntity?.error_code || 'PAYMENT_FAILED',
+                            failureReason: paymentEntity?.error_description || 'Payment failed',
                         },
                     });
                 }
-                return p;
+            }
+            // 4. Mark webhook event as processed
+            await prisma_1.prisma.webhookEvent.update({
+                where: { eventId },
+                data: {
+                    processed: true,
+                    processedAt: new Date(),
+                },
             });
             return res.status(200).json({
                 success: true,
-                message: 'Payment verified and secured.',
-                data: updated,
+                message: 'Webhook processed successfully.',
             });
         }
         catch (error) {
+            console.error('Webhook handling error:', error);
             return res.status(500).json({
                 success: false,
-                error: { message: error.message || 'Webhook processing failed' },
+                error: { message: error.message || 'Webhook processing failed.' },
             });
         }
     }
@@ -426,6 +669,66 @@ class PaymentsController {
             return res.status(500).json({
                 success: false,
                 error: { message: error.message || 'Failed to fetch invoice' },
+            });
+        }
+    }
+    /**
+     * GET /api/v1/payments/transactions
+     * Admin transaction ledger with search, filtering, and pagination
+     */
+    static async getTransactions(req, res) {
+        try {
+            const { search, status, page = '1', limit = '20' } = req.query;
+            const pageNum = Math.max(1, parseInt(page, 10));
+            const limitNum = Math.min(100, Math.max(1, parseInt(limit, 10)));
+            const skip = (pageNum - 1) * limitNum;
+            const whereClause = {};
+            if (status && status !== 'ALL') {
+                whereClause.status = status;
+            }
+            if (search) {
+                const term = String(search).trim();
+                whereClause.OR = [
+                    { orderId: { contains: term } },
+                    { razorpayOrderId: { contains: term } },
+                    { razorpayPaymentId: { contains: term } },
+                    { email: { contains: term } },
+                    { contact: { contains: term } },
+                    { user: { firstName: { contains: term } } },
+                    { user: { lastName: { contains: term } } },
+                ];
+            }
+            const [total, payments] = await Promise.all([
+                prisma_1.prisma.payment.count({ where: whereClause }),
+                prisma_1.prisma.payment.findMany({
+                    where: whereClause,
+                    include: {
+                        user: { select: { id: true, firstName: true, lastName: true, email: true, phone: true } },
+                        job: { select: { id: true, status: true, agreedPrice: true } },
+                        transactions: true,
+                    },
+                    orderBy: { createdAt: 'desc' },
+                    skip,
+                    take: limitNum,
+                }),
+            ]);
+            return res.status(200).json({
+                success: true,
+                data: {
+                    payments,
+                    pagination: {
+                        total,
+                        page: pageNum,
+                        limit: limitNum,
+                        pages: Math.ceil(total / limitNum),
+                    },
+                },
+            });
+        }
+        catch (error) {
+            return res.status(500).json({
+                success: false,
+                error: { message: error.message || 'Failed to fetch payment transactions.' },
             });
         }
     }

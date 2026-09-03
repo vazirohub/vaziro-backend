@@ -28,11 +28,18 @@ if (process.env.NODE_ENV !== 'test') {
   app.use(morgan('dev'));
 }
 
-// Request Parsers
-app.use(express.json({ limit: '10mb' }));
+// Request Parsers (capturing rawBody buffer for Razorpay cryptographic webhook verification)
+app.use(
+  express.json({
+    limit: '10mb',
+    verify: (req: any, _res, buf) => {
+      req.rawBody = buf;
+    },
+  })
+);
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// Global Rate Limiting (100 requests per 15 minutes per IP)
+// Global Rate Limiting (300 requests per 15 minutes per IP)
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 300,
@@ -50,6 +57,9 @@ app.use('/api', limiter);
 
 // API Version 1 Routes
 app.use('/api/v1', apiRoutes);
+
+// Compatibility alias for payments endpoints & webhooks: /api/payments/...
+app.use('/api', apiRoutes);
 
 // 404 Route Handler
 app.use('*', (req, res) => {
