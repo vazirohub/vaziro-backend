@@ -18,11 +18,12 @@ class LocationsController {
     }
     static async getCities(req, res, next) {
         try {
-            const { stateId, all } = req.query;
+            const targetStateId = req.query.stateId || req.params.stateId;
+            const { all } = req.query;
             const cities = await prisma_1.prisma.city.findMany({
                 where: {
                     ...(all === 'true' ? {} : { isActive: true }),
-                    ...(stateId ? { stateId: String(stateId) } : {}),
+                    ...(targetStateId ? { stateId: String(targetStateId) } : {}),
                 },
                 include: { state: true },
                 orderBy: { name: 'asc' },

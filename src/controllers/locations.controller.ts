@@ -17,11 +17,12 @@ export class LocationsController {
 
   static async getCities(req: Request, res: Response, next: NextFunction) {
     try {
-      const { stateId, all } = req.query;
+      const targetStateId = req.query.stateId || req.params.stateId;
+      const { all } = req.query;
       const cities = await prisma.city.findMany({
         where: {
           ...(all === 'true' ? {} : { isActive: true }),
-          ...(stateId ? { stateId: String(stateId) } : {}),
+          ...(targetStateId ? { stateId: String(targetStateId) } : {}),
         },
         include: { state: true },
         orderBy: { name: 'asc' },

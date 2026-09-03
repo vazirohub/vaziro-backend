@@ -5,6 +5,7 @@ const router = Router();
 
 router.get('/states', LocationsController.getStates);
 router.get('/cities', LocationsController.getCities);
+router.get('/cities/:stateId', LocationsController.getCities);
 router.get('/areas', LocationsController.getAreas);
 router.get('/pincodes', LocationsController.getPincodes);
 

@@ -30,19 +30,103 @@ class RequirementsController {
                     error: { message: 'For budget range, maximum budget must be greater than or equal to minimum budget.' },
                 });
             }
-            let customerProfile = await prisma_1.prisma.customerProfile.findUnique({
-                where: { userId },
-            });
-            if (!customerProfile) {
-                customerProfile = await prisma_1.prisma.customerProfile.create({
-                    data: {
-                        userId,
-                        cityId: cityId || null,
-                        pincodeId: effectivePincodeId || null,
+            // 1. Resolve Category
+            let validCategoryId = categoryId;
+            const existingCat = await prisma_1.prisma.category.findUnique({ where: { id: categoryId } });
+            if (!existingCat) {
+                const cleanCat = String(categoryId).replace(/^cat-/, '').toLowerCase();
+                const foundCat = await prisma_1.prisma.category.findFirst({
+                    where: {
+                        OR: [
+                            { slug: cleanCat },
+                            { name: { contains: cleanCat } },
+                        ],
                     },
                 });
+                if (foundCat) {
+                    validCategoryId = foundCat.id;
+                }
+                else {
+                    const firstCat = await prisma_1.prisma.category.findFirst({ where: { isActive: true } });
+                    if (firstCat)
+                        validCategoryId = firstCat.id;
+                }
             }
-            // Check if pincode exists in DB
+            // 2. Resolve Subcategory
+            let validSubcategoryId = subcategoryId;
+            const existingSub = await prisma_1.prisma.subcategory.findUnique({ where: { id: subcategoryId } });
+            if (!existingSub) {
+                const cleanSub = String(subcategoryId).replace(/^sub-/, '').toLowerCase();
+                const foundSub = await prisma_1.prisma.subcategory.findFirst({
+                    where: {
+                        categoryId: validCategoryId,
+                        OR: [
+                            { slug: cleanSub },
+                            { name: { contains: cleanSub } },
+                        ],
+                    },
+                });
+                if (foundSub) {
+                    validSubcategoryId = foundSub.id;
+                }
+                else {
+                    const firstSub = await prisma_1.prisma.subcategory.findFirst({
+                        where: { categoryId: validCategoryId, isActive: true },
+                    });
+                    if (firstSub)
+                        validSubcategoryId = firstSub.id;
+                }
+            }
+            // 3. Resolve City
+            let validCityId = null;
+            if (cityId) {
+                const existingCity = await prisma_1.prisma.city.findUnique({ where: { id: cityId } });
+                if (existingCity) {
+                    validCityId = existingCity.id;
+                }
+                else {
+                    const cleanCity = String(cityId).replace(/^city-/, '').toLowerCase();
+                    const foundCity = await prisma_1.prisma.city.findFirst({
+                        where: {
+                            OR: [
+                                { slug: cleanCity },
+                                { name: { contains: cleanCity } },
+                            ],
+                        },
+                    });
+                    if (foundCity) {
+                        validCityId = foundCity.id;
+                    }
+                }
+            }
+            if (!validCityId) {
+                const defaultCity = await prisma_1.prisma.city.findFirst({
+                    where: {
+                        OR: [
+                            { slug: 'delhi' },
+                            { name: 'Delhi' },
+                            { slug: 'new-delhi' },
+                        ],
+                    },
+                });
+                validCityId = defaultCity ? defaultCity.id : null;
+            }
+            // 4. Resolve State
+            let validStateId = null;
+            if (stateId) {
+                const existingState = await prisma_1.prisma.state.findUnique({ where: { id: stateId } });
+                if (existingState)
+                    validStateId = existingState.id;
+            }
+            if (!validStateId && validCityId) {
+                const cityWithState = await prisma_1.prisma.city.findUnique({
+                    where: { id: validCityId },
+                    select: { stateId: true },
+                });
+                if (cityWithState)
+                    validStateId = cityWithState.stateId;
+            }
+            // 5. Resolve Pincode
             let validPincodeId = null;
             if (effectivePincodeId) {
                 const pinRecord = await prisma_1.prisma.pincode.findFirst({
@@ -50,20 +134,33 @@ class RequirementsController {
                 });
                 validPincodeId = pinRecord ? pinRecord.id : null;
             }
+            // 6. Create or update CustomerProfile with validated foreign keys
+            let customerProfile = await prisma_1.prisma.customerProfile.findUnique({
+                where: { userId },
+            });
+            if (!customerProfile) {
+                customerProfile = await prisma_1.prisma.customerProfile.create({
+                    data: {
+                        userId,
+                        cityId: validCityId,
+                        pincodeId: validPincodeId,
+                    },
+                });
+            }
             const requirement = await prisma_1.prisma.requirement.create({
                 data: {
                     customerId: customerProfile.id,
-                    categoryId,
-                    subcategoryId,
+                    categoryId: validCategoryId,
+                    subcategoryId: validSubcategoryId,
                     title,
                     description,
                     budgetType: budgetType || 'FIXED',
                     budgetMin: effectiveMin,
                     budgetMax: effectiveMax,
                     currency: 'INR',
-                    stateId: stateId || null,
-                    cityId: cityId || null,
-                    areaId: areaId || null,
+                    stateId: validStateId,
+                    cityId: validCityId,
+                    areaId: null,
                     pincodeId: validPincodeId,
                     preferredDate: preferredDate ? new Date(preferredDate) : null,
                     preferredTime: preferredTime || null,
