@@ -152,16 +152,18 @@ class AuthController {
         try {
             const body = loginSchema.parse(req.body);
             const rawIdentifier = (body.identifier || body.email || body.phone || '').trim();
+            const isEmail = rawIdentifier.includes('@');
             const cleanDigits = rawIdentifier.replace(/\D/g, '');
             const formattedPhone = cleanDigits.length === 10 ? `+91${cleanDigits}` : rawIdentifier;
             const user = await prisma_1.prisma.user.findFirst({
-                where: {
-                    OR: [
-                        { email: rawIdentifier.toLowerCase() },
-                        { phone: rawIdentifier },
-                        { phone: formattedPhone },
-                    ],
-                },
+                where: isEmail
+                    ? { email: rawIdentifier.toLowerCase() }
+                    : {
+                        OR: [
+                            { phone: formattedPhone },
+                            { phone: rawIdentifier },
+                        ],
+                    },
                 include: {
                     roles: { include: { role: true } },
                     customerProfile: true,

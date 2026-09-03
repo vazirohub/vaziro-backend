@@ -19,6 +19,7 @@ app.use(
       callback(null, true);
     },
     credentials: true,
+    maxAge: 86400, // Cache preflight OPTIONS for 24 hours to cut network latency in half
   })
 );
 

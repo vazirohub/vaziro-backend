@@ -20,6 +20,7 @@ app.use((0, cors_1.default)({
         callback(null, true);
     },
     credentials: true,
+    maxAge: 86400, // Cache preflight OPTIONS for 24 hours to cut network latency in half
 }));
 // Logging
 if (process.env.NODE_ENV !== 'test') {
