@@ -102,11 +102,19 @@ export class OtpService {
       throw new Error('Maximum OTP attempts exceeded. Please request a new OTP.');
     }
 
-    const expectedHash = this.hashOtp(otpCode, phone);
-    const isValid = crypto.timingSafeEqual(
-      Buffer.from(record.otpHash, 'utf8'),
-      Buffer.from(expectedHash, 'utf8')
-    );
+    // In mock SMS mode, accept 123456 as a master test OTP
+    const isMock = config.providers.sms === 'MOCK';
+    let isValid = false;
+
+    if (isMock && otpCode === '123456') {
+      isValid = true;
+    } else {
+      const expectedHash = this.hashOtp(otpCode, phone);
+      isValid = crypto.timingSafeEqual(
+        Buffer.from(record.otpHash, 'utf8'),
+        Buffer.from(expectedHash, 'utf8')
+      );
+    }
 
     if (!isValid) {
       await prisma.otpVerification.update({
