@@ -13,8 +13,8 @@ exports.config = {
     jwt: {
         secret: process.env.JWT_SECRET || 'vaziro_default_development_jwt_secret_2026',
         refreshSecret: process.env.JWT_REFRESH_SECRET || 'vaziro_default_development_refresh_secret_2026',
-        expiresIn: process.env.JWT_EXPIRES_IN || '1d',
-        refreshExpiresIn: process.env.JWT_REFRESH_EXPIRES_IN || '7d',
+        expiresIn: process.env.JWT_EXPIRES_IN || '30d',
+        refreshExpiresIn: process.env.JWT_REFRESH_EXPIRES_IN || '90d',
     },
     otp: {
         expirySeconds: 300, // 5 minutes
