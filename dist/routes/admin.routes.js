@@ -13,5 +13,6 @@ router.get('/verifications', admin_controller_1.AdminController.getVerifications
 router.patch('/verifications/:id', admin_controller_1.AdminController.reviewVerification);
 router.get('/settings', admin_controller_1.AdminController.getSettings);
 router.put('/settings', admin_controller_1.AdminController.updateSetting);
+router.get('/locations', admin_controller_1.AdminController.getAllLocations);
 router.patch('/locations/toggle', admin_controller_1.AdminController.toggleLocation);
 exports.default = router;

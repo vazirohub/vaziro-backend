@@ -5,8 +5,9 @@ const prisma_1 = require("../lib/prisma");
 class LocationsController {
     static async getStates(req, res, next) {
         try {
+            const { all } = req.query;
             const states = await prisma_1.prisma.state.findMany({
-                where: { isActive: true },
+                where: all === 'true' ? {} : { isActive: true },
                 orderBy: { name: 'asc' },
             });
             return res.status(200).json({ success: true, data: states });
@@ -17,10 +18,10 @@ class LocationsController {
     }
     static async getCities(req, res, next) {
         try {
-            const { stateId } = req.query;
+            const { stateId, all } = req.query;
             const cities = await prisma_1.prisma.city.findMany({
                 where: {
-                    isActive: true,
+                    ...(all === 'true' ? {} : { isActive: true }),
                     ...(stateId ? { stateId: String(stateId) } : {}),
                 },
                 include: { state: true },

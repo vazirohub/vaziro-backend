@@ -4,8 +4,9 @@ import { prisma } from '../lib/prisma';
 export class LocationsController {
   static async getStates(req: Request, res: Response, next: NextFunction) {
     try {
+      const { all } = req.query;
       const states = await prisma.state.findMany({
-        where: { isActive: true },
+        where: all === 'true' ? {} : { isActive: true },
         orderBy: { name: 'asc' },
       });
       return res.status(200).json({ success: true, data: states });
@@ -16,10 +17,10 @@ export class LocationsController {
 
   static async getCities(req: Request, res: Response, next: NextFunction) {
     try {
-      const { stateId } = req.query;
+      const { stateId, all } = req.query;
       const cities = await prisma.city.findMany({
         where: {
-          isActive: true,
+          ...(all === 'true' ? {} : { isActive: true }),
           ...(stateId ? { stateId: String(stateId) } : {}),
         },
         include: { state: true },

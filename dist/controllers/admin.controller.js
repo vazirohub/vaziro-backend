@@ -236,6 +236,31 @@ class AdminController {
         }
     }
     /**
+     * GET /api/v1/admin/locations
+     */
+    static async getAllLocations(req, res) {
+        try {
+            const states = await prisma_1.prisma.state.findMany({
+                orderBy: { name: 'asc' },
+                include: {
+                    cities: {
+                        orderBy: { name: 'asc' },
+                    },
+                },
+            });
+            return res.status(200).json({
+                success: true,
+                data: states,
+            });
+        }
+        catch (error) {
+            return res.status(500).json({
+                success: false,
+                error: { message: error.message || 'Failed to fetch admin locations' },
+            });
+        }
+    }
+    /**
      * PATCH /api/v1/admin/locations/toggle
      */
     static async toggleLocation(req, res) {
