@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import { prisma } from '../lib/prisma';
 import { config } from '../config';
 import { Msg91Service } from './msg91.service';
+import { ensureDatabaseSchema } from '../lib/auto-migrate';
 
 export class OtpService {
   private static hashOtp(otp: string, phone: string): string {
@@ -21,6 +22,7 @@ export class OtpService {
     phone: string,
     purpose: string = 'login'
   ): Promise<{ success: boolean; message: string; cooldownSeconds: number }> {
+    await ensureDatabaseSchema().catch(() => {});
     // Check velocity rate limit (max 5 requests per 15 minutes)
     const fifteenMinutesAgo = new Date(Date.now() - config.otp.rateLimitWindowMinutes * 60 * 1000);
     const recentRequestsCount = await prisma.otpVerification.count({
@@ -94,6 +96,7 @@ export class OtpService {
   }
 
   static async verifyOtp(phone: string, otpCode: string, purpose: string = 'login'): Promise<boolean> {
+    await ensureDatabaseSchema().catch(() => {});
     const record = await prisma.otpVerification.findFirst({
       where: {
         phone,

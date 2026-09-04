@@ -8,6 +8,7 @@ const crypto_1 = __importDefault(require("crypto"));
 const prisma_1 = require("../lib/prisma");
 const config_1 = require("../config");
 const msg91_service_1 = require("./msg91.service");
+const auto_migrate_1 = require("../lib/auto-migrate");
 class OtpService {
     static hashOtp(otp, phone) {
         const salt = config_1.config.jwt.secret;
@@ -21,6 +22,7 @@ class OtpService {
         return crypto_1.default.randomInt(100000, 999999).toString();
     }
     static async requestOtp(phone, purpose = 'login') {
+        await (0, auto_migrate_1.ensureDatabaseSchema)().catch(() => { });
         // Check velocity rate limit (max 5 requests per 15 minutes)
         const fifteenMinutesAgo = new Date(Date.now() - config_1.config.otp.rateLimitWindowMinutes * 60 * 1000);
         const recentRequestsCount = await prisma_1.prisma.otpVerification.count({
@@ -81,6 +83,7 @@ class OtpService {
         return this.requestOtp(phone, purpose);
     }
     static async verifyOtp(phone, otpCode, purpose = 'login') {
+        await (0, auto_migrate_1.ensureDatabaseSchema)().catch(() => { });
         const record = await prisma_1.prisma.otpVerification.findFirst({
             where: {
                 phone,
