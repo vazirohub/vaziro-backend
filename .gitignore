@@ -4,7 +4,11 @@ build/
 .env.*
 *.env
 dev.db-journal
+*.db
+*.db-journal
+prisma/*.db
 coverage/
 *.log
 npm-debug.log*
 .DS_Store
+

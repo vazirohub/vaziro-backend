@@ -20,7 +20,8 @@ export class OtpService {
 
   static async requestOtp(
     phone: string,
-    purpose: string = 'login'
+    purpose: string = 'login',
+    options?: { widgetDispatched?: boolean }
   ): Promise<{ success: boolean; message: string; cooldownSeconds: number }> {
     await ensureDatabaseSchema().catch(() => {});
 
@@ -60,15 +61,35 @@ export class OtpService {
       }
     }
 
-    const otpCode = this.generateOtpCode();
-    const otpHash = this.hashOtp(otpCode, canonical);
-    const expiresAt = new Date(Date.now() + config.otp.expirySeconds * 1000);
-
     // Invalidate previous unused OTPs for this phone
     await prisma.otpVerification.updateMany({
       where: { phone: canonical, isUsed: false },
       data: { isUsed: true },
     });
+
+    // If already dispatched by MSG91 widget on client, record session for cooldown and avoid duplicate SMS
+    if (options?.widgetDispatched) {
+      await prisma.otpVerification.create({
+        data: {
+          phone: canonical,
+          otpHash: 'MSG91_WIDGET_DISPATCHED',
+          purpose,
+          expiresAt: new Date(Date.now() + config.otp.expirySeconds * 1000),
+          maxAttempts: config.otp.maxAttempts,
+        },
+      });
+
+      console.log(`[OTP] Widget dispatch session registered for ${canonical}`);
+      return {
+        success: true,
+        message: 'OTP dispatched via MSG91 widget.',
+        cooldownSeconds: config.otp.resendCooldownSeconds,
+      };
+    }
+
+    const otpCode = this.generateOtpCode();
+    const otpHash = this.hashOtp(otpCode, canonical);
+    const expiresAt = new Date(Date.now() + config.otp.expirySeconds * 1000);
 
     // Create new OTP record
     await prisma.otpVerification.create({
@@ -96,9 +117,10 @@ export class OtpService {
 
   static async resendOtp(
     phone: string,
-    purpose: string = 'resend'
+    purpose: string = 'resend',
+    options?: { widgetDispatched?: boolean }
   ): Promise<{ success: boolean; message: string; cooldownSeconds: number }> {
-    return this.requestOtp(phone, purpose);
+    return this.requestOtp(phone, purpose, options);
   }
 
   static async verifyOtp(phone: string, otpCode: string, purpose: string = 'login'): Promise<boolean> {

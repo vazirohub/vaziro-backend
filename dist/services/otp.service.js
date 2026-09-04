@@ -21,7 +21,7 @@ class OtpService {
         // Generate secure 6-digit code between 100000 and 999999
         return crypto_1.default.randomInt(100000, 999999).toString();
     }
-    static async requestOtp(phone, purpose = 'login') {
+    static async requestOtp(phone, purpose = 'login', options) {
         await (0, auto_migrate_1.ensureDatabaseSchema)().catch(() => { });
         const { canonical, isValid } = msg91_service_1.Msg91Service.normalizeIndianMobile(phone);
         if (!isValid) {
@@ -54,14 +54,32 @@ class OtpService {
                 };
             }
         }
-        const otpCode = this.generateOtpCode();
-        const otpHash = this.hashOtp(otpCode, canonical);
-        const expiresAt = new Date(Date.now() + config_1.config.otp.expirySeconds * 1000);
         // Invalidate previous unused OTPs for this phone
         await prisma_1.prisma.otpVerification.updateMany({
             where: { phone: canonical, isUsed: false },
             data: { isUsed: true },
         });
+        // If already dispatched by MSG91 widget on client, record session for cooldown and avoid duplicate SMS
+        if (options?.widgetDispatched) {
+            await prisma_1.prisma.otpVerification.create({
+                data: {
+                    phone: canonical,
+                    otpHash: 'MSG91_WIDGET_DISPATCHED',
+                    purpose,
+                    expiresAt: new Date(Date.now() + config_1.config.otp.expirySeconds * 1000),
+                    maxAttempts: config_1.config.otp.maxAttempts,
+                },
+            });
+            console.log(`[OTP] Widget dispatch session registered for ${canonical}`);
+            return {
+                success: true,
+                message: 'OTP dispatched via MSG91 widget.',
+                cooldownSeconds: config_1.config.otp.resendCooldownSeconds,
+            };
+        }
+        const otpCode = this.generateOtpCode();
+        const otpHash = this.hashOtp(otpCode, canonical);
+        const expiresAt = new Date(Date.now() + config_1.config.otp.expirySeconds * 1000);
         // Create new OTP record
         await prisma_1.prisma.otpVerification.create({
             data: {
@@ -83,8 +101,8 @@ class OtpService {
             cooldownSeconds: config_1.config.otp.resendCooldownSeconds,
         };
     }
-    static async resendOtp(phone, purpose = 'resend') {
-        return this.requestOtp(phone, purpose);
+    static async resendOtp(phone, purpose = 'resend', options) {
+        return this.requestOtp(phone, purpose, options);
     }
     static async verifyOtp(phone, otpCode, purpose = 'login') {
         await (0, auto_migrate_1.ensureDatabaseSchema)().catch(() => { });

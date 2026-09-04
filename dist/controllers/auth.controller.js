@@ -25,6 +25,7 @@ const sendOtpSchema = zod_1.z.object({
     mobile: zod_1.z.string().optional(),
     phone: zod_1.z.string().optional(),
     purpose: zod_1.z.string().default('login'),
+    widgetDispatched: zod_1.z.boolean().optional(),
 }).refine((data) => {
     const p = data.mobile || data.phone;
     return typeof p === 'string' && p.replace(/\D/g, '').length >= 10;
@@ -35,6 +36,7 @@ const resendOtpSchema = zod_1.z.object({
     mobile: zod_1.z.string().optional(),
     phone: zod_1.z.string().optional(),
     purpose: zod_1.z.string().default('resend'),
+    widgetDispatched: zod_1.z.boolean().optional(),
 }).refine((data) => {
     const p = data.mobile || data.phone;
     return typeof p === 'string' && p.replace(/\D/g, '').length >= 10;
@@ -153,7 +155,9 @@ class AuthController {
                     },
                 });
             }
-            const result = await otp_service_1.OtpService.requestOtp(canonical, parsed.purpose);
+            const result = await otp_service_1.OtpService.requestOtp(canonical, parsed.purpose, {
+                widgetDispatched: Boolean(parsed.widgetDispatched),
+            });
             if (!result.success) {
                 return res.status(429).json({
                     success: false,
@@ -212,7 +216,9 @@ class AuthController {
                     },
                 });
             }
-            const result = await otp_service_1.OtpService.resendOtp(canonical, parsed.purpose);
+            const result = await otp_service_1.OtpService.resendOtp(canonical, parsed.purpose, {
+                widgetDispatched: Boolean(parsed.widgetDispatched),
+            });
             if (!result.success) {
                 return res.status(429).json({
                     success: false,
@@ -265,8 +271,17 @@ class AuthController {
                     },
                 });
             }
-            // 1. If msg91Token is provided, verify against MSG91 verifyAccessToken API
-            if (msg91Token) {
+            // Verification logic:
+            if (msg91Verified) {
+                console.log(`[Auth] MSG91 client-side OTP verified successfully for ${canonical}`);
+                // Invalidate any open server-side OTP sessions for this phone
+                await prisma_1.prisma.otpVerification.updateMany({
+                    where: { phone: canonical, isUsed: false },
+                    data: { isUsed: true },
+                }).catch(() => { });
+            }
+            else if (msg91Token) {
+                // 1. If msg91Token is provided, verify against MSG91 verifyAccessToken API
                 const tokenRes = await msg91_service_1.Msg91Service.verifyAccessToken(msg91Token);
                 if (!tokenRes.success) {
                     return res.status(400).json({
@@ -277,8 +292,12 @@ class AuthController {
                         },
                     });
                 }
+                await prisma_1.prisma.otpVerification.updateMany({
+                    where: { phone: canonical, isUsed: false },
+                    data: { isUsed: true },
+                }).catch(() => { });
             }
-            else if (!msg91Verified) {
+            else {
                 // 2. Direct local/MSG91 OTP verification
                 if (!otp) {
                     return res.status(400).json({
