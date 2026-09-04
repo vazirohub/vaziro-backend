@@ -68,7 +68,7 @@ const completeSignupSchema = z.object({
     errorMap: () => ({ message: 'Role must be CUSTOMER or PROFESSIONAL.' }),
   }),
   name: z.string().min(2, 'Full name is required and must have at least 2 characters.'),
-  email: z.string().email().optional().or(z.literal('')),
+  email: z.string({ required_error: 'Email is required.' }).email('Please provide a valid email address.').min(5, 'Email is required.'),
   city: z.string().optional(),
   businessName: z.string().optional(),
   category: z.string().optional(),
@@ -85,7 +85,7 @@ const loginSchema = z.object({
 const registerSchema = z.object({
   name: z.string().min(2, 'Name is required and must have at least 2 characters.'),
   phone: z.string().min(10, 'Valid 10-digit Indian mobile number is required.'),
-  email: z.string().email().optional().or(z.literal('')),
+  email: z.string({ required_error: 'Email is required.' }).email('Please provide a valid email address.').min(5, 'Email is required.'),
   password: z.string().min(6, 'Password must be at least 6 characters.'),
   role: z.enum(['CUSTOMER', 'PROFESSIONAL']).default('CUSTOMER'),
 });
