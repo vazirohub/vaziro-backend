@@ -4,9 +4,18 @@ import { authenticate } from '../middlewares/auth.middleware';
 
 const router = Router();
 
-router.get('/user-exists', AuthController.checkUserExists);
-router.post('/otp/request', AuthController.requestOtp);
+// Dedicated Mobile + MSG91 OTP Authentication Routes
+router.post('/check-mobile', AuthController.checkMobile);
+router.post('/send-otp', AuthController.sendOtp);
+router.post('/resend-otp', AuthController.resendOtp);
+router.post('/verify-otp', AuthController.verifyOtp);
+router.post('/complete-signup', AuthController.completeSignup);
+
+// Compatibility aliases
+router.post('/otp/request', AuthController.sendOtp);
 router.post('/otp/verify', AuthController.verifyOtp);
+router.get('/user-exists', AuthController.checkUserExists);
+
 router.post('/login', AuthController.login);
 router.post('/register', AuthController.register);
 router.get('/me', authenticate, AuthController.getMe);

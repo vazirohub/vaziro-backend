@@ -17,10 +17,10 @@ exports.config = {
         refreshExpiresIn: process.env.JWT_REFRESH_EXPIRES_IN || '90d',
     },
     otp: {
-        expirySeconds: 300, // 5 minutes
-        maxAttempts: 3,
-        resendCooldownSeconds: 60,
-        rateLimitMaxRequests: 5,
+        expirySeconds: parseInt(process.env.MSG91_OTP_EXPIRY || '300', 10), // 5 minutes default
+        maxAttempts: parseInt(process.env.OTP_MAX_ATTEMPTS || '5', 10),
+        resendCooldownSeconds: parseInt(process.env.OTP_RESEND_COOLDOWN || '30', 10),
+        rateLimitMaxRequests: parseInt(process.env.OTP_MAX_REQUESTS || '5', 10),
         rateLimitWindowMinutes: 15,
     },
     businessRules: {
@@ -31,7 +31,7 @@ exports.config = {
         platformFeePercentage: parseFloat(process.env.PLATFORM_FEE_PERCENTAGE || '6.0'),
     },
     providers: {
-        sms: process.env.SMS_PROVIDER || 'MOCK',
+        sms: process.env.SMS_PROVIDER || (process.env.MSG91_AUTH_KEY ? 'MSG91' : 'MOCK'),
         payment: process.env.PAYMENT_PROVIDER || 'RAZORPAY',
         calling: process.env.CALL_PROVIDER || 'MOCK',
         verification: process.env.VERIFICATION_PROVIDER || 'DIGILOCKER_MOCK',
@@ -46,6 +46,10 @@ exports.config = {
     },
     msg91: {
         authKey: process.env.MSG91_AUTH_KEY || '567588TYvUCtrkERZ6a9a9c96P1',
+        templateId: process.env.MSG91_TEMPLATE_ID || '',
+        senderId: process.env.MSG91_SENDER_ID || 'VAZIRO',
+        otpExpiryMinutes: Math.max(1, Math.round(parseInt(process.env.MSG91_OTP_EXPIRY || '300', 10) / 60)),
+        otpLength: parseInt(process.env.MSG91_OTP_LENGTH || '6', 10),
         widgetId: process.env.MSG91_WIDGET_ID || '366964695657393438383035',
         tokenAuth: process.env.MSG91_TOKEN_AUTH || '567588TYvUCtrkERZ6a9a9c96P1',
     },

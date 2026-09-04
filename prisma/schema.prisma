@@ -99,14 +99,16 @@ model RefreshToken {
 }
 
 model OtpVerification {
-  id          String   @id @default(uuid())
+  id          String    @id @default(uuid())
   phone       String
   otpHash     String
-  attempts    Int      @default(0)
-  maxAttempts Int      @default(3)
-  isUsed      Boolean  @default(false)
+  purpose     String    @default("login")
+  attempts    Int       @default(0)
+  maxAttempts Int       @default(5)
+  isUsed      Boolean   @default(false)
+  verifiedAt  DateTime?
   expiresAt   DateTime
-  createdAt   DateTime @default(now())
+  createdAt   DateTime  @default(now())
 
   @@index([phone])
 }

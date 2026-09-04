@@ -7,7 +7,7 @@ exports.OtpService = void 0;
 const crypto_1 = __importDefault(require("crypto"));
 const prisma_1 = require("../lib/prisma");
 const config_1 = require("../config");
-const sms_service_1 = require("./sms.service");
+const msg91_service_1 = require("./msg91.service");
 class OtpService {
     static hashOtp(otp, phone) {
         const salt = config_1.config.jwt.secret;
@@ -20,7 +20,7 @@ class OtpService {
         // Generate secure 6-digit code between 100000 and 999999
         return crypto_1.default.randomInt(100000, 999999).toString();
     }
-    static async requestOtp(phone) {
+    static async requestOtp(phone, purpose = 'login') {
         // Check velocity rate limit (max 5 requests per 15 minutes)
         const fifteenMinutesAgo = new Date(Date.now() - config_1.config.otp.rateLimitWindowMinutes * 60 * 1000);
         const recentRequestsCount = await prisma_1.prisma.otpVerification.count({
@@ -30,7 +30,7 @@ class OtpService {
             },
         });
         if (recentRequestsCount >= config_1.config.otp.rateLimitMaxRequests) {
-            throw new Error('Too many OTP requests. Please wait 15 minutes before trying again.');
+            throw new Error('Too many OTP requests. Please wait before trying again.');
         }
         // Check resend cooldown
         const latestOtp = await prisma_1.prisma.otpVerification.findFirst({
@@ -61,20 +61,26 @@ class OtpService {
             data: {
                 phone,
                 otpHash,
+                purpose,
                 expiresAt,
                 maxAttempts: config_1.config.otp.maxAttempts,
             },
         });
-        // Send SMS via provider abstraction
-        const smsContent = `Your Vaziro verification code is ${otpCode}. Valid for 5 minutes. Please do not share this OTP.`;
-        await sms_service_1.smsProvider.sendSMS(phone, smsContent);
+        // Send OTP via MSG91 server-side API (no secrets exposed to client)
+        const msg91Res = await msg91_service_1.Msg91Service.sendOtp(phone, otpCode);
+        if (!msg91Res.success) {
+            throw new Error("We couldn't send the OTP right now. Please try again in a moment.");
+        }
         return {
             success: true,
             message: 'OTP dispatched successfully.',
             cooldownSeconds: config_1.config.otp.resendCooldownSeconds,
         };
     }
-    static async verifyOtp(phone, otpCode) {
+    static async resendOtp(phone, purpose = 'resend') {
+        return this.requestOtp(phone, purpose);
+    }
+    static async verifyOtp(phone, otpCode, purpose = 'login') {
         const record = await prisma_1.prisma.otpVerification.findFirst({
             where: {
                 phone,
@@ -84,37 +90,43 @@ class OtpService {
             orderBy: { createdAt: 'desc' },
         });
         if (!record) {
-            throw new Error('OTP has expired or is invalid. Please request a new one.');
+            throw new Error('This OTP has expired. Please request a new OTP.');
         }
         if (record.attempts >= record.maxAttempts) {
             await prisma_1.prisma.otpVerification.update({
                 where: { id: record.id },
                 data: { isUsed: true },
             });
-            throw new Error('Maximum OTP attempts exceeded. Please request a new OTP.');
+            throw new Error('Too many incorrect attempts. Please request a new OTP.');
         }
-        // In mock SMS mode, accept 123456 as a master test OTP
-        const isMock = config_1.config.providers.sms === 'MOCK';
-        let isValid = false;
-        if (isMock && otpCode === '123456') {
+        // Verify hash
+        const inputHash = this.hashOtp(otpCode, phone);
+        let isValid = inputHash === record.otpHash;
+        // Development / test-only bypass (strictly disabled in production)
+        if (!isValid && process.env.NODE_ENV === 'test' && otpCode === '123456') {
             isValid = true;
         }
-        else {
-            const expectedHash = this.hashOtp(otpCode, phone);
-            isValid = crypto_1.default.timingSafeEqual(Buffer.from(record.otpHash, 'utf8'), Buffer.from(expectedHash, 'utf8'));
-        }
         if (!isValid) {
+            const newAttempts = record.attempts + 1;
             await prisma_1.prisma.otpVerification.update({
                 where: { id: record.id },
-                data: { attempts: record.attempts + 1 },
+                data: {
+                    attempts: newAttempts,
+                    ...(newAttempts >= record.maxAttempts ? { isUsed: true } : {}),
+                },
             });
-            const remaining = record.maxAttempts - (record.attempts + 1);
-            throw new Error(`Incorrect OTP. ${remaining} attempt(s) remaining.`);
+            if (newAttempts >= record.maxAttempts) {
+                throw new Error('Too many incorrect attempts. Please request a new OTP.');
+            }
+            throw new Error('Incorrect OTP. Please check the OTP and try again.');
         }
-        // Mark OTP as used
+        // Mark as successfully verified & used
         await prisma_1.prisma.otpVerification.update({
             where: { id: record.id },
-            data: { isUsed: true },
+            data: {
+                isUsed: true,
+                verifiedAt: new Date(),
+            },
         });
         return true;
     }
