@@ -104,6 +104,9 @@ describe('Vaziro End-to-End Marketplace Flow (Phase 10 E2E Verification)', () =>
     }
 
     if (professionalProfile) {
+      await prisma.creditLedger.deleteMany({ where: { professionalProfileId: professionalProfile.id } });
+      await prisma.planPurchase.deleteMany({ where: { professionalProfileId: professionalProfile.id } });
+      await prisma.creditBatch.deleteMany({ where: { professionalProfileId: professionalProfile.id } });
       await prisma.creditTransaction.deleteMany({ where: { wallet: { professionalProfileId: professionalProfile.id } } });
       await prisma.creditWallet.deleteMany({ where: { professionalProfileId: professionalProfile.id } });
       await prisma.verification.deleteMany({ where: { professionalProfileId: professionalProfile.id } });
@@ -140,21 +143,29 @@ describe('Vaziro End-to-End Marketplace Flow (Phase 10 E2E Verification)', () =>
     expect(requirement.status).toBe('RECEIVING_QUOTES');
   });
 
-  it('Step 2: Professional inspects wallet and receives 10 promotional credits', async () => {
+  it('Step 2: Professional inspects wallet and purchases Growth Plan (115 credits)', async () => {
     const wallet = await CreditService.getOrCreateWallet(professionalProfile.id);
     expect(wallet.balance).toBeGreaterThanOrEqual(10);
+
+    // Purchase Growth Plan (115 credits) to have balance for ₹5,000 requirement (50 credits)
+    const purchaseResult = await CreditService.fulfillPlanPurchase(
+      professionalProfile.id,
+      'growth',
+      { razorpayPaymentId: `pay_test_${Date.now()}`, amountPaid: 1000 }
+    );
+    expect(purchaseResult.wallet?.balance).toBeGreaterThanOrEqual(125);
   });
 
-  it('Step 3: Professional applies & submits quotation (Deducts 5 Credits atomically)', async () => {
+  it('Step 3: Professional applies & submits quotation (Deducts 50 Credits atomically)', async () => {
     const creditCost = await CreditService.calculateFee(requirement.budgetMin, requirement.budgetMax);
-    expect(creditCost).toBe(5);
+    expect(creditCost).toBe(50);
 
     const deduction = await CreditService.deductCreditsForApplication(
       professionalProfile.id,
       requirement.id,
       creditCost
     );
-    expect(deduction.creditsDeducted).toBe(5);
+    expect(deduction.creditsDeducted).toBe(50);
 
     // Create Application & Quotation
     const application = await prisma.application.create({

@@ -311,53 +311,155 @@ async function main() {
   }
   console.log('✅ 8 Categories & 48 Subcategories seeded successfully');
 
-  // 4. Credit Plans (Section 20)
-  const creditPlans = [
+  // 4. Vaziro Professional Plans (Section 13)
+  const professionalPlans = [
     {
-      name: 'FREE',
-      price: 0.0,
-      creditsCount: 0,
-      perks: 'Standard directory visibility; Credits can be purchased separately.',
-      isRecommended: false,
+      name: 'Starter',
+      slug: 'starter',
+      price: 100.0,
+      baseCredits: 10,
+      bonusCredits: 0,
+      totalCredits: 10,
+      visibilityTier: 'STANDARD',
+      description: 'Standard visibility in professional search results. Essential pack for verified local professionals.',
+      isPopular: false,
+      isActive: true,
+      displayOrder: 1,
     },
     {
-      name: 'STARTER',
-      price: 999.0,
-      creditsCount: 25,
-      perks: 'Basic promotion badge; standard requirement alerts.',
-      isRecommended: false,
+      name: 'Basic',
+      slug: 'basic',
+      price: 250.0,
+      baseCredits: 25,
+      bonusCredits: 2,
+      totalCredits: 27,
+      visibilityTier: 'ENHANCED',
+      description: 'Enhanced visibility in customer searches. Includes 2 bonus promotional credits.',
+      isPopular: false,
+      isActive: true,
+      displayOrder: 2,
     },
     {
-      name: 'GROWTH',
-      price: 1999.0,
-      creditsCount: 55,
-      perks: 'Better promotion; highlighted in quotations; 10% bonus value.',
-      isRecommended: true,
+      name: 'Popular',
+      slug: 'popular',
+      price: 500.0,
+      baseCredits: 50,
+      bonusCredits: 5,
+      totalCredits: 55,
+      visibilityTier: 'HIGHER',
+      description: 'Higher visibility across all matching service categories. Includes 5 bonus promotional credits.',
+      isPopular: true,
+      isActive: true,
+      displayOrder: 3,
     },
     {
-      name: 'PRO',
-      price: 2999.0,
-      creditsCount: 90,
-      perks: 'Advanced promotion; top search tier; priority customer introduction.',
-      isRecommended: false,
+      name: 'Growth',
+      slug: 'growth',
+      price: 1000.0,
+      baseCredits: 100,
+      bonusCredits: 15,
+      totalCredits: 115,
+      visibilityTier: 'HIGH_PRIORITY',
+      description: 'High-priority visibility ranking in customer discovery feeds. Includes 15 bonus promotional credits.',
+      isPopular: false,
+      isActive: true,
+      displayOrder: 4,
+    },
+    {
+      name: 'Pro',
+      slug: 'pro',
+      price: 2500.0,
+      baseCredits: 250,
+      bonusCredits: 50,
+      totalCredits: 300,
+      visibilityTier: 'HIGHEST_ELIGIBLE',
+      description: 'Highest eligible visibility tier and ranking. Includes 50 bonus promotional credits for high-volume quoting.',
+      isPopular: false,
+      isActive: true,
+      displayOrder: 5,
     },
   ];
 
-  for (const plan of creditPlans) {
-    await prisma.creditPlan.upsert({
+  for (const plan of professionalPlans) {
+    await prisma.professionalPlan.upsert({
       where: { name: plan.name },
-      update: { price: plan.price, creditsCount: plan.creditsCount, perks: plan.perks, isRecommended: plan.isRecommended },
+      update: plan,
       create: plan,
     });
-  }
-  console.log('✅ Credit Plans (FREE, STARTER, GROWTH, PRO) seeded');
 
-  // 5. Configurable System Settings (Section 18, 19, 34, 47)
+    // Also sync legacy creditPlan for backward compatibility
+    await prisma.creditPlan.upsert({
+      where: { name: plan.name.toUpperCase() },
+      update: {
+        price: plan.price,
+        creditsCount: plan.totalCredits,
+        perks: `${plan.visibilityTier} Visibility • ${plan.baseCredits} Base + ${plan.bonusCredits} Bonus Credits`,
+        isRecommended: plan.isPopular,
+        isActive: true,
+      },
+      create: {
+        name: plan.name.toUpperCase(),
+        price: plan.price,
+        creditsCount: plan.totalCredits,
+        perks: `${plan.visibilityTier} Visibility • ${plan.baseCredits} Base + ${plan.bonusCredits} Bonus Credits`,
+        isRecommended: plan.isPopular,
+        isActive: true,
+      },
+    });
+  }
+  console.log('✅ 5 Vaziro Professional Plans (Starter, Basic, Popular, Growth, Pro) seeded');
+
+  // 4B. Customer Boost Packages (Section 29)
+  const boostPackages = [
+    {
+      name: 'Basic Boost',
+      slug: 'basic-boost',
+      durationDays: 1,
+      price: 29.0,
+      priority: 1,
+      description: '1 Day of higher placement in relevant professional feeds.',
+      isActive: true,
+      displayOrder: 1,
+    },
+    {
+      name: 'Standard Boost',
+      slug: 'standard-boost',
+      durationDays: 3,
+      price: 59.0,
+      priority: 2,
+      description: '3 Days of elevated visibility and verified Boosted badge.',
+      isActive: true,
+      displayOrder: 2,
+    },
+    {
+      name: 'Premium Boost',
+      slug: 'premium-boost',
+      durationDays: 7,
+      price: 99.0,
+      priority: 3,
+      description: '7 Days of top priority placement across professional job boards.',
+      isActive: true,
+      displayOrder: 3,
+    },
+  ];
+
+  for (const pkg of boostPackages) {
+    await prisma.boostPackage.upsert({
+      where: { slug: pkg.slug },
+      update: pkg,
+      create: pkg,
+    });
+  }
+  console.log('✅ 3 Customer Boost Packages (Basic ₹29, Standard ₹59, Premium ₹99) seeded');
+
+  // 5. Configurable System Settings (Section 10, 15, 18, 19, 34)
   const settings = [
-    { key: 'application_fee_percentage', value: '5.0', type: 'NUMBER', description: 'Percentage of stated requirement budget used for application fee calculation' },
-    { key: 'credit_value', value: '50.0', type: 'NUMBER', description: 'Nominal INR value of 1 credit for fee computations' },
+    { key: 'application_fee_percentage', value: '10.0', type: 'NUMBER', description: 'Percentage of stated requirement budget used for application fee calculation (10%)' },
+    { key: 'credit_value', value: '10.0', type: 'NUMBER', description: 'Nominal INR value of 1 credit for fee computations (1 Credit = ₹10)' },
+    { key: 'credit_nominal_value', value: '10.0', type: 'NUMBER', description: '1 Credit = ₹10 INR' },
+    { key: 'credit_validity_days', value: '90', type: 'NUMBER', description: 'Validity duration in days for purchased base credits' },
     { key: 'minimum_application_credits', value: '1', type: 'NUMBER', description: 'Minimum credits required to apply to any requirement' },
-    { key: 'maximum_application_credits', value: '100', type: 'NUMBER', description: 'Maximum credits cap for high-budget jobs' },
+    { key: 'maximum_application_credits', value: '500', type: 'NUMBER', description: 'Maximum credits cap for high-budget jobs' },
     { key: 'platform_fee_percentage', value: '6.0', type: 'NUMBER', description: 'Platform commission percentage deducted upon customer approval of completed job' },
     { key: 'payment_protection_enabled', value: 'true', type: 'BOOLEAN', description: 'Whether payment protection is active on the platform' },
     { key: 'calling_enabled', value: 'true', type: 'BOOLEAN', description: 'Whether virtual masked calling is enabled' },

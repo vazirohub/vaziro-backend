@@ -14,6 +14,7 @@ import paymentsRoutes from './payments.routes';
 import disputesRoutes from './disputes.routes';
 import reviewsRoutes from './reviews.routes';
 import adminRoutes from './admin.routes';
+import boostRoutes from './boost.routes';
 
 const router = Router();
 
@@ -32,5 +33,6 @@ router.use('/payments', paymentsRoutes);
 router.use('/disputes', disputesRoutes);
 router.use('/reviews', reviewsRoutes);
 router.use('/admin', adminRoutes);
+router.use('/boost', boostRoutes);
 
 export default router;

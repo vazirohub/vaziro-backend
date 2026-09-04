@@ -58,15 +58,23 @@ class QuotationsController {
             }
             const creditCost = await credit_service_1.CreditService.calculateFee(requirement.budgetMin, requirement.budgetMax);
             const result = await prisma_1.prisma.$transaction(async (tx) => {
-                const deduction = await credit_service_1.CreditService.deductCreditsForApplication(prof.id, requirement.id, creditCost);
+                // 1. Atomic credit deduction inside the transaction
+                const deduction = await credit_service_1.CreditService.deductCreditsForApplication(prof.id, requirement.id, creditCost, tx);
+                // 2. Create application with immutable snapshot of fee terms (Section 15, 20)
                 const application = await tx.application.create({
                     data: {
                         requirementId: requirement.id,
                         professionalProfileId: prof.id,
                         creditsSpent: creditCost,
+                        customerBudgetAtApplication: requirement.budgetMin,
+                        creditPercentageAtApplication: 10.0,
+                        creditValueAtApplication: 10.0,
+                        creditsCharged: creditCost,
+                        batchAllocation: JSON.stringify(deduction.batchAllocations),
                         status: 'SUBMITTED',
                     },
                 });
+                // 3. Create quotation linked to application
                 const quotation = await tx.quotation.create({
                     data: {
                         applicationId: application.id,

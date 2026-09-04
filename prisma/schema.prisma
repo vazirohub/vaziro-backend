@@ -138,6 +138,7 @@ model CustomerProfile {
   requirements       Requirement[]
   jobs               Job[]
   reviewsWritten     Review[]
+  requirementBoosts  RequirementBoost[]
 }
 
 model ProfessionalProfile {
@@ -164,6 +165,11 @@ model ProfessionalProfile {
   serviceAreas         ServiceArea[]
   verification         Verification?
   creditWallet         CreditWallet?
+  creditBatches        CreditBatch[]
+  planPurchases        PlanPurchase[]
+  creditLedgers        CreditLedger[]
+  linkedAccount        ProfessionalLinkedAccount?
+  routeTransfers       RouteTransfer[]
   applications         Application[]
   quotations           Quotation[]
   jobs                 Job[]
@@ -358,6 +364,9 @@ model Requirement {
   genderPreference      String?      @default("NO_PREFERENCE") // MALE, FEMALE, NO_PREFERENCE
   specialInstructions   String?
   status                String       @default("PUBLISHED") // DRAFT, PUBLISHED, RECEIVING_QUOTES, SHORTLISTED, PROFESSIONAL_SELECTED, HIRED, IN_PROGRESS, COMPLETED, CANCELLED, EXPIRED, DISPUTED, CLOSED
+  isBoosted             Boolean      @default(false)
+  boostPriority         Int          @default(0)
+  boostExpiresAt        DateTime?
   createdAt             DateTime     @default(now())
   updatedAt             DateTime     @updatedAt
 
@@ -376,11 +385,14 @@ model Requirement {
   jobs                  Job[]
   chatThreads           ChatThread[]
   callSessions          CallSession[]
+  boosts                RequirementBoost[]
 
   @@index([customerId])
   @@index([categoryId])
   @@index([subcategoryId])
   @@index([status])
+  @@index([isBoosted])
+  @@index([boostPriority])
 }
 
 model RequirementAttachment {
@@ -401,6 +413,11 @@ model Application {
   requirementId         String
   professionalProfileId String
   creditsSpent          Int                 @default(0)
+  customerBudgetAtApplication Float?
+  creditPercentageAtApplication Float?      @default(10.0)
+  creditValueAtApplication Float?           @default(10.0)
+  creditsCharged        Int?
+  batchAllocation       String?             // JSON snapshot of batch deduction
   aiMatchScore          Float?
   status                String              @default("SUBMITTED") // SUBMITTED, SHORTLISTED, HIRED, REJECTED, WITHDRAWN
   createdAt             DateTime            @default(now())
@@ -492,6 +509,8 @@ model Job {
   review                   Review?
   disputes                 Dispute[]
   invoices                 Invoice[]
+  marketplacePayment       MarketplacePayment?
+  routeTransfers           RouteTransfer[]
 
   @@index([requirementId])
   @@index([customerId])
@@ -549,6 +568,7 @@ model Payment {
   currency          String             @default("INR")
   status            String             @default("PENDING") // CREATED, ATTEMPTED, AUTHORIZED, CAPTURED, PAID, FAILED, REFUNDED, PARTIALLY_REFUNDED, CANCELLED
   paymentMethod     String?            // UPI, CARD, NETBANKING
+  paymentPurpose    String?            @default("MARKETPLACE_PAYMENT") // PROFESSIONAL_PLAN, REQUIREMENT_BOOST, MARKETPLACE_PAYMENT, OTHER
   email             String?
   contact           String?
   description       String?
@@ -833,6 +853,197 @@ model CreditRefund {
 
   @@index([creditWalletId])
   @@index([requirementId])
+}
+
+// ---------------------------------------------------------
+// 8B. Master Specification: Professional Plans, Credit Batches & Ledger
+// ---------------------------------------------------------
+
+model ProfessionalPlan {
+  id              String         @id @default(uuid())
+  name            String         @unique // STARTER, BASIC, POPULAR, GROWTH, PRO
+  slug            String         @unique
+  price           Float          // in INR: 100, 250, 500, 1000, 2500
+  baseCredits     Int            // 10, 25, 50, 100, 250
+  bonusCredits    Int            // 0, 2, 5, 15, 50
+  totalCredits    Int            // 10, 27, 55, 115, 300
+  visibilityTier  String         @default("STANDARD") // STANDARD, ENHANCED, HIGHER, HIGH_PRIORITY, HIGHEST
+  description     String?
+  isPopular       Boolean        @default(false)
+  isActive        Boolean        @default(true)
+  displayOrder    Int            @default(0)
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  purchases       PlanPurchase[]
+}
+
+model PlanPurchase {
+  id                     String              @id @default(uuid())
+  professionalProfileId  String
+  planId                 String
+  amountPaid             Float
+  currency               String              @default("INR")
+  baseCreditsAwarded     Int
+  bonusCreditsAwarded    Int
+  totalCreditsAwarded    Int
+  paymentId              String?
+  razorpayOrderId        String?
+  razorpayPaymentId      String?
+  status                 String              @default("COMPLETED") // PENDING, COMPLETED, FAILED
+  createdAt              DateTime            @default(now())
+  updatedAt              DateTime            @updatedAt
+
+  professional           ProfessionalProfile @relation(fields: [professionalProfileId], references: [id], onDelete: Cascade)
+  plan                   ProfessionalPlan    @relation(fields: [planId], references: [id], onDelete: Cascade)
+  batches                CreditBatch[]
+
+  @@index([professionalProfileId])
+  @@index([planId])
+  @@index([razorpayPaymentId])
+}
+
+model CreditBatch {
+  id                        String              @id @default(uuid())
+  professionalProfileId     String
+  planPurchaseId            String?
+  batchType                 String              @default("PURCHASED") // PURCHASED, BONUS, PROMOTIONAL
+  purchasedCredits          Int                 @default(0)
+  bonusCredits              Int                 @default(0)
+  remainingPurchasedCredits Int                 @default(0)
+  remainingBonusCredits     Int                 @default(0)
+  grantedAt                 DateTime            @default(now())
+  expiresAt                 DateTime            // 90 days from grantedAt
+  status                    String              @default("ACTIVE") // ACTIVE, EXPIRED, REFUND_PENDING, REFUND_PROCESSING, REFUNDED, REFUND_FAILED, EXPIRED_NON_REFUNDABLE
+  originalPlanPricePaise    Int                 @default(0)
+  refundAmountPaise         Int                 @default(0)
+  razorpayRefundId          String?
+  refundedAt                DateTime?
+  failureReason             String?
+  createdAt                 DateTime            @default(now())
+  updatedAt                 DateTime            @updatedAt
+
+  professional              ProfessionalProfile @relation(fields: [professionalProfileId], references: [id], onDelete: Cascade)
+  planPurchase              PlanPurchase?       @relation(fields: [planPurchaseId], references: [id], onDelete: SetNull)
+  ledgers                   CreditLedger[]
+
+  @@index([professionalProfileId])
+  @@index([status])
+  @@index([expiresAt])
+}
+
+model CreditLedger {
+  id                    String              @id @default(uuid())
+  professionalProfileId String
+  creditBatchId         String?
+  transactionType       String              // PLAN_PURCHASE, BONUS_CREDIT, APPLICATION_DEBIT, APPLICATION_REFUND, REFUND, EXPIRATION, ADMIN_ADJUSTMENT, REVERSAL
+  amount                Int                 // Signed integer (+50, -15, etc.)
+  balanceBefore         Int
+  balanceAfter          Int
+  referenceEntityId     String?             // e.g. Requirement ID, PlanPurchase ID, or Batch ID
+  reason                String?
+  actorAdminId          String?
+  createdAt             DateTime            @default(now())
+
+  professional          ProfessionalProfile @relation(fields: [professionalProfileId], references: [id], onDelete: Cascade)
+  batch                 CreditBatch?        @relation(fields: [creditBatchId], references: [id], onDelete: SetNull)
+
+  @@index([professionalProfileId])
+  @@index([creditBatchId])
+  @@index([transactionType])
+  @@index([createdAt])
+}
+
+model BoostPackage {
+  id           String             @id @default(uuid())
+  name         String             // Basic Boost, Standard Boost, Premium Boost
+  slug         String             @unique
+  durationDays Int                // 1, 3, 7
+  price        Float              // 29, 59, 99
+  priority     Int                @default(1) // 1, 2, 3
+  description  String?
+  isActive     Boolean            @default(true)
+  displayOrder Int                @default(0)
+  createdAt    DateTime           @default(now())
+  updatedAt    DateTime           @updatedAt
+
+  boosts       RequirementBoost[]
+}
+
+model RequirementBoost {
+  id                String          @id @default(uuid())
+  requirementId     String
+  customerId        String
+  boostPackageId    String
+  paymentId         String?
+  razorpayOrderId   String?
+  razorpayPaymentId String?
+  startsAt          DateTime        @default(now())
+  expiresAt         DateTime
+  status            String          @default("ACTIVE") // PAYMENT_PENDING, ACTIVE, EXPIRED, CANCELLED, REFUNDED
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+
+  requirement       Requirement     @relation(fields: [requirementId], references: [id], onDelete: Cascade)
+  customer          CustomerProfile @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  package           BoostPackage    @relation(fields: [boostPackageId], references: [id], onDelete: Cascade)
+
+  @@index([requirementId])
+  @@index([customerId])
+  @@index([status])
+  @@index([expiresAt])
+}
+
+model MarketplacePayment {
+  id                    String              @id @default(uuid())
+  jobId                 String              @unique
+  customerId            String
+  professionalProfileId String
+  paymentId             String?
+  amount                Float
+  platformFee           Float               @default(0.0)
+  netProfessionalAmount Float               @default(0.0)
+  currency              String              @default("INR")
+  status                String              @default("HELD") // HELD, RELEASED, REFUNDED, DISPUTED
+  createdAt             DateTime            @default(now())
+  updatedAt             DateTime            @updatedAt
+
+  job                   Job                 @relation(fields: [jobId], references: [id], onDelete: Cascade)
+}
+
+model ProfessionalLinkedAccount {
+  id                    String              @id @default(uuid())
+  professionalProfileId String              @unique
+  razorpayAccountId     String              @unique
+  accountStatus         String              @default("CREATED") // NOT_CREATED, CREATED, ACTIVATED, SUSPENDED
+  businessType          String?             @default("individual")
+  legalName             String?
+  accountNumberMasked   String?
+  ifscCode              String?
+  createdAt             DateTime            @default(now())
+  updatedAt             DateTime            @updatedAt
+
+  professional          ProfessionalProfile @relation(fields: [professionalProfileId], references: [id], onDelete: Cascade)
+}
+
+model RouteTransfer {
+  id                    String              @id @default(uuid())
+  paymentId             String?
+  jobId                 String?
+  professionalProfileId String
+  razorpayTransferId    String              @unique
+  amount                Float
+  currency              String              @default("INR")
+  status                String              @default("PROCESSED") // PENDING, PROCESSED, FAILED, REVERSED
+  failureReason         String?
+  createdAt             DateTime            @default(now())
+  updatedAt             DateTime            @updatedAt
+
+  professional          ProfessionalProfile @relation(fields: [professionalProfileId], references: [id], onDelete: Cascade)
+  job                   Job?                @relation(fields: [jobId], references: [id], onDelete: SetNull)
+
+  @@index([professionalProfileId])
+  @@index([jobId])
 }
 
 // ---------------------------------------------------------

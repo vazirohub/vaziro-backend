@@ -3,38 +3,41 @@ import { AIMatchService } from '../services/ai-match.service';
 
 describe('Marketplace Business Rules & Calculators', () => {
   describe('Credit Application Fee Calculation (Section 18)', () => {
-    it('should calculate 1 credit for ₹500 and ₹1,000 (minimum rule)', async () => {
+    it('should calculate 1 credit for ₹80 and ₹100 (minimum rule)', async () => {
+      const fee80 = await CreditService.calculateFee(80);
+      expect(fee80).toBe(1);
+
+      const fee100 = await CreditService.calculateFee(100);
+      expect(fee100).toBe(1);
+    });
+
+    it('should calculate 2 credits for ₹101 and ₹200', async () => {
+      const fee101 = await CreditService.calculateFee(101);
+      expect(fee101).toBe(2);
+
+      const fee200 = await CreditService.calculateFee(200);
+      expect(fee200).toBe(2);
+    });
+
+    it('should calculate 5 credits for ₹500', async () => {
       const fee500 = await CreditService.calculateFee(500);
-      expect(fee500).toBe(1);
+      expect(fee500).toBe(5);
+    });
 
+    it('should calculate 10 credits for ₹1,000', async () => {
       const fee1000 = await CreditService.calculateFee(1000);
-      expect(fee1000).toBe(1);
+      expect(fee1000).toBe(10);
     });
 
-    it('should calculate 2 credits for ₹2,000', async () => {
-      const fee2000 = await CreditService.calculateFee(2000);
-      expect(fee2000).toBe(2);
-    });
-
-    it('should calculate 5 credits for ₹5,000', async () => {
+    it('should calculate 50 credits for ₹5,000', async () => {
       const fee5000 = await CreditService.calculateFee(5000);
-      expect(fee5000).toBe(5);
-    });
-
-    it('should calculate 10 credits for ₹10,000', async () => {
-      const fee10000 = await CreditService.calculateFee(10000);
-      expect(fee10000).toBe(10);
-    });
-
-    it('should calculate 50 credits for ₹50,000', async () => {
-      const fee50000 = await CreditService.calculateFee(50000);
-      expect(fee50000).toBe(50);
+      expect(fee5000).toBe(50);
     });
 
     it('should use maximum budget when a range is provided', async () => {
       const feeRange = await CreditService.calculateFee(8000, 12000);
-      // 5% of 12,000 = 600 INR / 50 = 12 credits
-      expect(feeRange).toBe(12);
+      // CEIL(12,000 / 100) = 120 credits
+      expect(feeRange).toBe(120);
     });
   });
 

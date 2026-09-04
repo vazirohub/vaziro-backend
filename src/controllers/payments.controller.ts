@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import { prisma } from '../lib/prisma';
 import { config } from '../config';
 import { RazorpayService } from '../services/razorpay.service';
+import { CreditService } from '../services/credit.service';
 
 export class PaymentsController {
   /**
@@ -506,6 +507,85 @@ export class PaymentsController {
                 where: { id: payment.jobId, status: 'HIRED' },
                 data: { status: 'SCHEDULED' },
               });
+
+              const job = await tx.job.findUnique({ where: { id: payment.jobId } });
+              if (job) {
+                await tx.marketplacePayment.upsert({
+                  where: { jobId: job.id },
+                  update: { status: 'HELD', paymentId: payment.id },
+                  create: {
+                    jobId: job.id,
+                    customerId: job.customerId,
+                    professionalProfileId: job.professionalProfileId,
+                    paymentId: payment.id,
+                    amount: payment.amount,
+                    platformFee,
+                    netProfessionalAmount: payment.amount - platformFee,
+                    status: 'HELD',
+                  },
+                });
+              }
+            }
+
+            // Extract notes & purpose for idempotent order fulfillment
+            const notes = paymentEntity?.notes || orderEntity?.notes || {};
+            const purpose = payment.paymentPurpose || notes.type;
+
+            // Section 44: Professional Plan Fulfill via Webhook (Idempotent)
+            if (purpose === 'PROFESSIONAL_PLAN' && (notes.planId || notes.professionalProfileId)) {
+              try {
+                await CreditService.fulfillPlanPurchase(notes.professionalProfileId, notes.planId, {
+                  paymentId: payment.id,
+                  razorpayOrderId,
+                  razorpayPaymentId,
+                  amountPaid: amountInInr,
+                });
+              } catch (planErr: any) {
+                console.warn('Webhook plan fulfillment note:', planErr.message);
+              }
+            }
+
+            // Section 27: Requirement Boost Activation via Webhook (Idempotent)
+            if (purpose === 'REQUIREMENT_BOOST' && notes.requirementId && notes.boostPackageId) {
+              try {
+                const existingBoost = await tx.requirementBoost.findFirst({
+                  where: { razorpayPaymentId },
+                });
+                if (!existingBoost) {
+                  const boostPkg = await tx.boostPackage.findUnique({ where: { id: notes.boostPackageId } });
+                  const reqRecord = await tx.requirement.findUnique({ where: { id: notes.requirementId } });
+                  if (boostPkg && reqRecord) {
+                    const now = new Date();
+                    let expiresAt = new Date(now.getTime() + boostPkg.durationDays * 24 * 60 * 60 * 1000);
+                    if (reqRecord.isBoosted && reqRecord.boostExpiresAt && reqRecord.boostExpiresAt > now) {
+                      expiresAt = new Date(reqRecord.boostExpiresAt.getTime() + boostPkg.durationDays * 24 * 60 * 60 * 1000);
+                    }
+                    await tx.requirementBoost.create({
+                      data: {
+                        requirementId: reqRecord.id,
+                        customerId: notes.customerId || reqRecord.customerId,
+                        boostPackageId: boostPkg.id,
+                        paymentId: payment.id,
+                        razorpayOrderId,
+                        razorpayPaymentId,
+                        startsAt: now,
+                        expiresAt,
+                        status: 'ACTIVE',
+                      },
+                    });
+                    await tx.requirement.update({
+                      where: { id: reqRecord.id },
+                      data: {
+                        isBoosted: true,
+                        boostPriority: Math.max(reqRecord.boostPriority || 0, boostPkg.priority),
+                        boostExpiresAt: expiresAt,
+                      },
+                    });
+                  }
+                }
+              } catch (boostErr: any) {
+                console.warn('Webhook boost activation note:', boostErr.message);
+              }
             }
           });
         }
@@ -631,6 +711,53 @@ export class PaymentsController {
           },
         });
 
+        // Razorpay Route Transfer: automatic settlement to linked account (Section 42)
+        const linkedAccount = await tx.professionalLinkedAccount.findUnique({
+          where: { professionalProfileId: job.professionalProfileId },
+        });
+
+        let routeTransfer = null;
+        if (linkedAccount && linkedAccount.razorpayAccountId) {
+          try {
+            const transfer = await RazorpayService.createTransfer(
+              paymentRecord?.razorpayPaymentId || paymentRecord?.id || '',
+              linkedAccount.razorpayAccountId,
+              netPayout,
+              { jobId: job.id, professionalProfileId: job.professionalProfileId }
+            );
+
+            routeTransfer = await tx.routeTransfer.create({
+              data: {
+                paymentId: paymentRecord?.id || null,
+                jobId: job.id,
+                professionalProfileId: job.professionalProfileId,
+                razorpayTransferId: transfer.id,
+                amount: netPayout,
+                currency: 'INR',
+                status: 'PROCESSED',
+              },
+            });
+          } catch (trfErr: any) {
+            console.warn('Razorpay Route transfer note:', trfErr.message);
+          }
+        }
+
+        // Update or create MarketplacePayment record
+        await tx.marketplacePayment.upsert({
+          where: { jobId: job.id },
+          update: { status: 'RELEASED' },
+          create: {
+            jobId: job.id,
+            customerId: job.customerId,
+            professionalProfileId: job.professionalProfileId,
+            paymentId: paymentRecord?.id || null,
+            amount: totalAmount,
+            platformFee,
+            netProfessionalAmount: netPayout,
+            status: 'RELEASED',
+          },
+        });
+
         const invoiceCount = await tx.invoice.count();
         const invoiceNumber = `VAZ-${new Date().getFullYear()}${String(new Date().getMonth() + 1).padStart(2, '0')}-${String(invoiceCount + 1001).padStart(5, '0')}`;
 
@@ -661,6 +788,7 @@ export class PaymentsController {
         return {
           job: updatedJob,
           payout,
+          routeTransfer,
           invoice,
           breakdown: {
             totalAmount,

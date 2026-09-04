@@ -135,6 +135,7 @@ model CustomerProfile {
   requirements       Requirement[]
   jobs               Job[]
   reviewsWritten     Review[]
+  requirementBoosts  RequirementBoost[]
 }
 
 model ProfessionalProfile {
@@ -161,6 +162,11 @@ model ProfessionalProfile {
   serviceAreas         ServiceArea[]
   verification         Verification?
   creditWallet         CreditWallet?
+  creditBatches        CreditBatch[]
+  planPurchases        PlanPurchase[]
+  creditLedgers        CreditLedger[]
+  linkedAccount        ProfessionalLinkedAccount?
+  routeTransfers       RouteTransfer[]
   applications         Application[]
   quotations           Quotation[]
   jobs                 Job[]
@@ -355,6 +361,9 @@ model Requirement {
   genderPreference      String?      @default("NO_PREFERENCE") @db.VarChar(30)
   specialInstructions   String?      @db.Text
   status                String       @default("PUBLISHED") @db.VarChar(32)
+  isBoosted             Boolean      @default(false)
+  boostPriority         Int          @default(0)
+  boostExpiresAt        DateTime?
   createdAt             DateTime     @default(now())
   updatedAt             DateTime     @updatedAt
 
@@ -373,11 +382,14 @@ model Requirement {
   jobs                  Job[]
   chatThreads           ChatThread[]
   callSessions          CallSession[]
+  boosts                RequirementBoost[]
 
   @@index([customerId])
   @@index([categoryId])
   @@index([subcategoryId])
   @@index([status])
+  @@index([isBoosted])
+  @@index([boostPriority])
 }
 
 model RequirementAttachment {
@@ -398,6 +410,11 @@ model Application {
   requirementId         String              @db.VarChar(36)
   professionalProfileId String              @db.VarChar(36)
   creditsSpent          Int                 @default(0)
+  customerBudgetAtApplication Decimal?      @db.Decimal(12, 2)
+  creditPercentageAtApplication Decimal?    @default(10.0) @db.Decimal(5, 2)
+  creditValueAtApplication Decimal?         @default(10.0) @db.Decimal(8, 2)
+  creditsCharged        Int?
+  batchAllocation       String?             @db.Text
   aiMatchScore          Decimal?            @db.Decimal(5, 2)
   status                String              @default("SUBMITTED") @db.VarChar(32)
   createdAt             DateTime            @default(now())
@@ -489,6 +506,8 @@ model Job {
   review                   Review?
   disputes                 Dispute[]
   invoices                 Invoice[]
+  marketplacePayment       MarketplacePayment?
+  routeTransfers           RouteTransfer[]
 
   @@index([requirementId])
   @@index([customerId])
@@ -541,6 +560,7 @@ model Payment {
   currency        String             @default("INR") @db.VarChar(3)
   status          String             @default("PENDING") @db.VarChar(32)
   paymentMethod   String?            @db.VarChar(32)
+  paymentPurpose  String?            @default("MARKETPLACE_PAYMENT") @db.VarChar(32)
   createdAt       DateTime           @default(now())
   updatedAt       DateTime           @updatedAt
 
@@ -802,6 +822,197 @@ model CreditRefund {
 
   @@index([creditWalletId])
   @@index([requirementId])
+}
+
+// ---------------------------------------------------------
+// 8B. Master Specification: Professional Plans, Credit Batches & Ledger
+// ---------------------------------------------------------
+
+model ProfessionalPlan {
+  id              String         @id @default(uuid()) @db.VarChar(36)
+  name            String         @unique @db.VarChar(50) // STARTER, BASIC, POPULAR, GROWTH, PRO
+  slug            String         @unique @db.VarChar(50)
+  price           Decimal        @db.Decimal(12, 2) // in INR: 100, 250, 500, 1000, 2500
+  baseCredits     Int            // 10, 25, 50, 100, 250
+  bonusCredits    Int            // 0, 2, 5, 15, 50
+  totalCredits    Int            // 10, 27, 55, 115, 300
+  visibilityTier  String         @default("STANDARD") @db.VarChar(32) // STANDARD, ENHANCED, HIGHER, HIGH_PRIORITY, HIGHEST
+  description     String?        @db.Text
+  isPopular       Boolean        @default(false)
+  isActive        Boolean        @default(true)
+  displayOrder    Int            @default(0)
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  purchases       PlanPurchase[]
+}
+
+model PlanPurchase {
+  id                     String              @id @default(uuid()) @db.VarChar(36)
+  professionalProfileId  String              @db.VarChar(36)
+  planId                 String              @db.VarChar(36)
+  amountPaid             Decimal             @db.Decimal(12, 2)
+  currency               String              @default("INR") @db.VarChar(3)
+  baseCreditsAwarded     Int
+  bonusCreditsAwarded    Int
+  totalCreditsAwarded    Int
+  paymentId              String?             @db.VarChar(128)
+  razorpayOrderId        String?             @db.VarChar(128)
+  razorpayPaymentId      String?             @db.VarChar(128)
+  status                 String              @default("COMPLETED") @db.VarChar(32) // PENDING, COMPLETED, FAILED
+  createdAt              DateTime            @default(now())
+  updatedAt              DateTime            @updatedAt
+
+  professional           ProfessionalProfile @relation(fields: [professionalProfileId], references: [id], onDelete: Cascade)
+  plan                   ProfessionalPlan    @relation(fields: [planId], references: [id], onDelete: Cascade)
+  batches                CreditBatch[]
+
+  @@index([professionalProfileId])
+  @@index([planId])
+  @@index([razorpayPaymentId])
+}
+
+model CreditBatch {
+  id                        String              @id @default(uuid()) @db.VarChar(36)
+  professionalProfileId     String              @db.VarChar(36)
+  planPurchaseId            String?             @db.VarChar(36)
+  batchType                 String              @default("PURCHASED") @db.VarChar(32) // PURCHASED, BONUS, PROMOTIONAL
+  purchasedCredits          Int                 @default(0)
+  bonusCredits              Int                 @default(0)
+  remainingPurchasedCredits Int                 @default(0)
+  remainingBonusCredits     Int                 @default(0)
+  grantedAt                 DateTime            @default(now())
+  expiresAt                 DateTime            // 90 days from grantedAt
+  status                    String              @default("ACTIVE") @db.VarChar(32) // ACTIVE, EXPIRED, REFUND_PENDING, REFUND_PROCESSING, REFUNDED, REFUND_FAILED, EXPIRED_NON_REFUNDABLE
+  originalPlanPricePaise    Int                 @default(0)
+  refundAmountPaise         Int                 @default(0)
+  razorpayRefundId          String?             @db.VarChar(128)
+  refundedAt                DateTime?
+  failureReason             String?             @db.VarChar(255)
+  createdAt                 DateTime            @default(now())
+  updatedAt                 DateTime            @updatedAt
+
+  professional              ProfessionalProfile @relation(fields: [professionalProfileId], references: [id], onDelete: Cascade)
+  planPurchase              PlanPurchase?       @relation(fields: [planPurchaseId], references: [id], onDelete: SetNull)
+  ledgers                   CreditLedger[]
+
+  @@index([professionalProfileId])
+  @@index([status])
+  @@index([expiresAt])
+}
+
+model CreditLedger {
+  id                    String              @id @default(uuid()) @db.VarChar(36)
+  professionalProfileId String              @db.VarChar(36)
+  creditBatchId         String?             @db.VarChar(36)
+  transactionType       String              @db.VarChar(32) // PLAN_PURCHASE, BONUS_CREDIT, APPLICATION_DEBIT, APPLICATION_REFUND, REFUND, EXPIRATION, ADMIN_ADJUSTMENT, REVERSAL
+  amount                Int                 // Signed integer (+50, -15, etc.)
+  balanceBefore         Int
+  balanceAfter          Int
+  referenceEntityId     String?             @db.VarChar(128)
+  reason                String?             @db.VarChar(255)
+  actorAdminId          String?             @db.VarChar(36)
+  createdAt             DateTime            @default(now())
+
+  professional          ProfessionalProfile @relation(fields: [professionalProfileId], references: [id], onDelete: Cascade)
+  batch                 CreditBatch?        @relation(fields: [creditBatchId], references: [id], onDelete: SetNull)
+
+  @@index([professionalProfileId])
+  @@index([creditBatchId])
+  @@index([transactionType])
+  @@index([createdAt])
+}
+
+model BoostPackage {
+  id           String             @id @default(uuid()) @db.VarChar(36)
+  name         String             @db.VarChar(100) // Basic Boost, Standard Boost, Premium Boost
+  slug         String             @unique @db.VarChar(50)
+  durationDays Int                // 1, 3, 7
+  price        Decimal            @db.Decimal(12, 2) // 29, 59, 99
+  priority     Int                @default(1) // 1, 2, 3
+  description  String?            @db.Text
+  isActive     Boolean            @default(true)
+  displayOrder Int                @default(0)
+  createdAt    DateTime           @default(now())
+  updatedAt    DateTime           @updatedAt
+
+  boosts       RequirementBoost[]
+}
+
+model RequirementBoost {
+  id                String          @id @default(uuid()) @db.VarChar(36)
+  requirementId     String          @db.VarChar(36)
+  customerId        String          @db.VarChar(36)
+  boostPackageId    String          @db.VarChar(36)
+  paymentId         String?         @db.VarChar(128)
+  razorpayOrderId   String?         @db.VarChar(128)
+  razorpayPaymentId String?         @db.VarChar(128)
+  startsAt          DateTime        @default(now())
+  expiresAt         DateTime
+  status            String          @default("ACTIVE") @db.VarChar(32) // PAYMENT_PENDING, ACTIVE, EXPIRED, CANCELLED, REFUNDED
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+
+  requirement       Requirement     @relation(fields: [requirementId], references: [id], onDelete: Cascade)
+  customer          CustomerProfile @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  package           BoostPackage    @relation(fields: [boostPackageId], references: [id], onDelete: Cascade)
+
+  @@index([requirementId])
+  @@index([customerId])
+  @@index([status])
+  @@index([expiresAt])
+}
+
+model MarketplacePayment {
+  id                    String              @id @default(uuid()) @db.VarChar(36)
+  jobId                 String              @unique @db.VarChar(36)
+  customerId            String              @db.VarChar(36)
+  professionalProfileId String              @db.VarChar(36)
+  paymentId             String?             @db.VarChar(128)
+  amount                Decimal             @db.Decimal(12, 2)
+  platformFee           Decimal             @default(0.0) @db.Decimal(12, 2)
+  netProfessionalAmount Decimal             @default(0.0) @db.Decimal(12, 2)
+  currency              String              @default("INR") @db.VarChar(3)
+  status                String              @default("HELD") @db.VarChar(32) // HELD, RELEASED, REFUNDED, DISPUTED
+  createdAt             DateTime            @default(now())
+  updatedAt             DateTime            @updatedAt
+
+  job                   Job                 @relation(fields: [jobId], references: [id], onDelete: Cascade)
+}
+
+model ProfessionalLinkedAccount {
+  id                    String              @id @default(uuid()) @db.VarChar(36)
+  professionalProfileId String              @unique @db.VarChar(36)
+  razorpayAccountId     String              @unique @db.VarChar(128)
+  accountStatus         String              @default("CREATED") @db.VarChar(32) // NOT_CREATED, CREATED, ACTIVATED, SUSPENDED
+  businessType          String?             @default("individual") @db.VarChar(50)
+  legalName             String?             @db.VarChar(150)
+  accountNumberMasked   String?             @db.VarChar(32)
+  ifscCode              String?             @db.VarChar(32)
+  createdAt             DateTime            @default(now())
+  updatedAt             DateTime            @updatedAt
+
+  professional          ProfessionalProfile @relation(fields: [professionalProfileId], references: [id], onDelete: Cascade)
+}
+
+model RouteTransfer {
+  id                    String              @id @default(uuid()) @db.VarChar(36)
+  paymentId             String?             @db.VarChar(128)
+  jobId                 String?             @db.VarChar(36)
+  professionalProfileId String              @db.VarChar(36)
+  razorpayTransferId    String              @unique @db.VarChar(128)
+  amount                Decimal             @db.Decimal(12, 2)
+  currency              String              @default("INR") @db.VarChar(3)
+  status                String              @default("PROCESSED") @db.VarChar(32) // PENDING, PROCESSED, FAILED, REVERSED
+  failureReason         String?             @db.VarChar(255)
+  createdAt             DateTime            @default(now())
+  updatedAt             DateTime            @updatedAt
+
+  professional          ProfessionalProfile @relation(fields: [professionalProfileId], references: [id], onDelete: Cascade)
+  job                   Job?                @relation(fields: [jobId], references: [id], onDelete: SetNull)
+
+  @@index([professionalProfileId])
+  @@index([jobId])
 }
 
 // ---------------------------------------------------------

@@ -7,7 +7,7 @@ const razorpay_service_1 = require("../services/razorpay.service");
 class CreditsController {
     /**
      * GET /api/v1/credits/wallet
-     * Returns current professional wallet and transaction ledger
+     * Returns comprehensive real-time wallet breakdown (Section 60)
      */
     static async getWallet(req, res) {
         try {
@@ -15,7 +15,6 @@ class CreditsController {
             if (!userId) {
                 return res.status(401).json({ success: false, error: { message: 'Unauthorized' } });
             }
-            // Find professional profile for user
             const prof = await prisma_1.prisma.professionalProfile.findUnique({
                 where: { userId },
             });
@@ -25,10 +24,10 @@ class CreditsController {
                     error: { code: 'PROFILE_NOT_FOUND', message: 'Professional profile not found for this user.' },
                 });
             }
-            const wallet = await credit_service_1.CreditService.getOrCreateWallet(prof.id);
+            const detailedWallet = await credit_service_1.CreditService.getDetailedWallet(prof.id);
             return res.status(200).json({
                 success: true,
-                data: wallet,
+                data: detailedWallet,
             });
         }
         catch (error) {
@@ -40,25 +39,27 @@ class CreditsController {
     }
     /**
      * POST /api/v1/credits/calculate-fee
-     * Calculates required application credits for a given budget
+     * Calculates required application credits for a given budget (Section 10-12)
      */
     static async calculateFee(req, res) {
         try {
-            const { budgetMin, budgetMax } = req.body;
-            if (!budgetMin || typeof budgetMin !== 'number' || budgetMin <= 0) {
+            const { budgetMin, budgetMax, budget } = req.body;
+            const minVal = budgetMin !== undefined ? Number(budgetMin) : Number(budget);
+            const maxVal = budgetMax !== undefined ? Number(budgetMax) : minVal;
+            if (!minVal || isNaN(minVal) || minVal <= 0) {
                 return res.status(400).json({
                     success: false,
                     error: { message: 'Valid minimum budget is required (positive number).' },
                 });
             }
-            const credits = await credit_service_1.CreditService.calculateFee(budgetMin, budgetMax);
+            const credits = await credit_service_1.CreditService.calculateFee(minVal, maxVal);
             return res.status(200).json({
                 success: true,
                 data: {
-                    budgetMin,
-                    budgetMax: budgetMax || budgetMin,
+                    budgetMin: minVal,
+                    budgetMax: maxVal,
                     creditsRequired: credits,
-                    nominalCostInr: credits * 50,
+                    nominalCostInr: credits * 10, // 1 Credit = ₹10
                     currency: 'INR (₹)',
                 },
             });
@@ -72,14 +73,37 @@ class CreditsController {
     }
     /**
      * GET /api/v1/credits/plans
-     * List available credit plans
+     * List 5 Vaziro Professional Plans (Section 13)
      */
     static async getPlans(req, res) {
         try {
-            const plans = await prisma_1.prisma.creditPlan.findMany({
+            let plans = await prisma_1.prisma.professionalPlan.findMany({
                 where: { isActive: true },
-                orderBy: { price: 'asc' },
+                orderBy: { displayOrder: 'asc' },
             });
+            if (!plans || plans.length === 0) {
+                // Fallback to legacy CreditPlan
+                const legacyPlans = await prisma_1.prisma.creditPlan.findMany({
+                    where: { isActive: true },
+                    orderBy: { price: 'asc' },
+                });
+                plans = legacyPlans.map((p, idx) => ({
+                    id: p.id,
+                    name: p.name,
+                    slug: p.name.toLowerCase(),
+                    price: p.price,
+                    baseCredits: p.creditsCount,
+                    bonusCredits: 0,
+                    totalCredits: p.creditsCount,
+                    visibilityTier: 'STANDARD',
+                    description: p.perks,
+                    isPopular: p.isRecommended,
+                    isActive: true,
+                    displayOrder: idx + 1,
+                    createdAt: p.createdAt,
+                    updatedAt: p.updatedAt,
+                }));
+            }
             return res.status(200).json({
                 success: true,
                 data: plans,
@@ -88,50 +112,13 @@ class CreditsController {
         catch (error) {
             return res.status(500).json({
                 success: false,
-                error: { message: error.message || 'Failed to fetch credit plans' },
-            });
-        }
-    }
-    /**
-     * POST /api/v1/credits/purchase
-     * Purchase a credit bundle
-     */
-    static async purchasePlan(req, res) {
-        try {
-            const userId = req.user?.id;
-            const { planId } = req.body;
-            if (!planId) {
-                return res.status(400).json({
-                    success: false,
-                    error: { message: 'Plan ID is required.' },
-                });
-            }
-            const prof = await prisma_1.prisma.professionalProfile.findUnique({
-                where: { userId },
-            });
-            if (!prof) {
-                return res.status(404).json({
-                    success: false,
-                    error: { code: 'PROFILE_NOT_FOUND', message: 'Professional profile not found.' },
-                });
-            }
-            const result = await credit_service_1.CreditService.purchasePlan(prof.id, planId);
-            return res.status(200).json({
-                success: true,
-                message: 'Credit plan purchased successfully.',
-                data: result,
-            });
-        }
-        catch (error) {
-            return res.status(400).json({
-                success: false,
-                error: { message: error.message || 'Failed to complete credit plan purchase' },
+                error: { message: error.message || 'Failed to fetch professional plans' },
             });
         }
     }
     /**
      * POST /api/v1/credits/create-order
-     * Generate Razorpay order for credit pack purchase
+     * Generate Razorpay order for professional plan purchase (Section 39, 44, 70)
      */
     static async createOrder(req, res) {
         try {
@@ -143,14 +130,42 @@ class CreditsController {
                     error: { message: 'Plan ID is required.' },
                 });
             }
-            const plan = await prisma_1.prisma.creditPlan.findUnique({
-                where: { id: planId },
+            // Fetch authoritative plan from DB (Never trust frontend price)
+            let plan = await prisma_1.prisma.professionalPlan.findFirst({
+                where: {
+                    OR: [{ id: planId }, { slug: planId }, { name: planId }],
+                    isActive: true,
+                },
             });
-            if (!plan || !plan.isActive) {
-                return res.status(404).json({
-                    success: false,
-                    error: { message: 'Credit plan not found or inactive.' },
+            if (!plan) {
+                const legacyPlan = await prisma_1.prisma.creditPlan.findFirst({
+                    where: {
+                        OR: [{ id: planId }, { name: planId }],
+                        isActive: true,
+                    },
                 });
+                if (!legacyPlan) {
+                    return res.status(404).json({
+                        success: false,
+                        error: { message: 'Professional plan not found or inactive.' },
+                    });
+                }
+                plan = {
+                    id: legacyPlan.id,
+                    name: legacyPlan.name,
+                    slug: legacyPlan.name.toLowerCase(),
+                    price: legacyPlan.price,
+                    baseCredits: legacyPlan.creditsCount,
+                    bonusCredits: 0,
+                    totalCredits: legacyPlan.creditsCount,
+                    visibilityTier: 'STANDARD',
+                    description: legacyPlan.perks,
+                    isPopular: legacyPlan.isRecommended,
+                    isActive: true,
+                    displayOrder: 1,
+                    createdAt: legacyPlan.createdAt,
+                    updatedAt: legacyPlan.updatedAt,
+                };
             }
             const prof = await prisma_1.prisma.professionalProfile.findUnique({
                 where: { userId },
@@ -161,16 +176,29 @@ class CreditsController {
                     error: { code: 'PROFILE_NOT_FOUND', message: 'Professional profile not found.' },
                 });
             }
-            const receipt = `cr_${prof.id.substring(0, 8)}_${Date.now()}`;
+            const receipt = `plan_${prof.id.substring(0, 8)}_${Date.now()}`;
             const razorpayOrder = await razorpay_service_1.RazorpayService.createOrder(plan.price, receipt, {
                 planId: plan.id,
                 professionalProfileId: prof.id,
                 userId: userId || '',
-                type: 'CREDIT_PURCHASE',
+                type: 'PROFESSIONAL_PLAN',
+            });
+            // Pre-record pending Payment record
+            await prisma_1.prisma.payment.create({
+                data: {
+                    userId,
+                    orderId: receipt,
+                    razorpayOrderId: razorpayOrder.id,
+                    amount: plan.price,
+                    currency: 'INR',
+                    status: 'CREATED',
+                    paymentPurpose: 'PROFESSIONAL_PLAN',
+                    description: `Vaziro Professional Plan: ${plan.name} (₹${plan.price})`,
+                },
             });
             return res.status(200).json({
                 success: true,
-                message: 'Credit purchase order created successfully.',
+                message: 'Professional plan purchase order created successfully.',
                 data: {
                     orderId: razorpayOrder.id,
                     amount: razorpayOrder.amount, // in paise
@@ -180,11 +208,14 @@ class CreditsController {
                     plan: {
                         id: plan.id,
                         name: plan.name,
-                        creditsCount: plan.creditsCount,
                         price: plan.price,
+                        baseCredits: plan.baseCredits,
+                        bonusCredits: plan.bonusCredits,
+                        totalCredits: plan.totalCredits,
+                        visibilityTier: plan.visibilityTier,
                     },
                     user: {
-                        name: `${req.user?.firstName} ${req.user?.lastName}`.trim(),
+                        name: `${req.user?.firstName || ''} ${req.user?.lastName || ''}`.trim(),
                         email: req.user?.email || '',
                         phone: req.user?.phone || '',
                     },
@@ -194,13 +225,13 @@ class CreditsController {
         catch (error) {
             return res.status(500).json({
                 success: false,
-                error: { message: error.message || 'Failed to create credit order' },
+                error: { message: error.message || 'Failed to create professional plan order' },
             });
         }
     }
     /**
      * POST /api/v1/credits/verify-payment
-     * Verify Razorpay signature and credit professional's wallet
+     * Cryptographically verify signature and fulfill plan purchase (Section 40, 44)
      */
     static async verifyPayment(req, res) {
         try {
@@ -212,7 +243,7 @@ class CreditsController {
                     error: { message: 'orderId, paymentId, and planId are required.' },
                 });
             }
-            // Cryptographic verification
+            // Cryptographic verification server-side
             const isValid = razorpay_service_1.RazorpayService.verifyPaymentSignature(orderId, paymentId, signature);
             if (!isValid) {
                 return res.status(400).json({
@@ -229,10 +260,22 @@ class CreditsController {
                     error: { code: 'PROFILE_NOT_FOUND', message: 'Professional profile not found.' },
                 });
             }
-            const result = await credit_service_1.CreditService.purchasePlan(prof.id, planId, paymentId);
+            // Update payment status to CAPTURED
+            await prisma_1.prisma.payment.updateMany({
+                where: { razorpayOrderId: orderId },
+                data: {
+                    status: 'CAPTURED',
+                    razorpayPaymentId: paymentId,
+                    capturedAt: new Date(),
+                },
+            });
+            const result = await credit_service_1.CreditService.fulfillPlanPurchase(prof.id, planId, {
+                razorpayOrderId: orderId,
+                razorpayPaymentId: paymentId,
+            });
             return res.status(200).json({
                 success: true,
-                message: 'Payment verified! Credits added to your wallet successfully.',
+                message: 'Payment verified! Professional plan and credits activated successfully.',
                 data: result,
             });
         }
@@ -242,6 +285,71 @@ class CreditsController {
                 error: { message: error.message || 'Failed to verify payment' },
             });
         }
+    }
+    /**
+     * GET /api/v1/credits/batches
+     * View all credit batches (active, expiring, refunded) (Section 18, 117)
+     */
+    static async getBatches(req, res) {
+        try {
+            const userId = req.user?.id;
+            const prof = await prisma_1.prisma.professionalProfile.findUnique({
+                where: { userId },
+            });
+            if (!prof) {
+                return res.status(404).json({ success: false, error: { message: 'Profile not found' } });
+            }
+            const batches = await prisma_1.prisma.creditBatch.findMany({
+                where: { professionalProfileId: prof.id },
+                include: { planPurchase: { include: { plan: true } } },
+                orderBy: { grantedAt: 'desc' },
+            });
+            return res.status(200).json({
+                success: true,
+                data: batches,
+            });
+        }
+        catch (error) {
+            return res.status(500).json({
+                success: false,
+                error: { message: error.message || 'Failed to fetch credit batches' },
+            });
+        }
+    }
+    /**
+     * GET /api/v1/credits/ledger
+     * View immutable credit audit ledger (Section 20, 117)
+     */
+    static async getLedger(req, res) {
+        try {
+            const userId = req.user?.id;
+            const prof = await prisma_1.prisma.professionalProfile.findUnique({
+                where: { userId },
+            });
+            if (!prof) {
+                return res.status(404).json({ success: false, error: { message: 'Profile not found' } });
+            }
+            const ledger = await prisma_1.prisma.creditLedger.findMany({
+                where: { professionalProfileId: prof.id },
+                include: { batch: true },
+                orderBy: { createdAt: 'desc' },
+                take: 100,
+            });
+            return res.status(200).json({
+                success: true,
+                data: ledger,
+            });
+        }
+        catch (error) {
+            return res.status(500).json({
+                success: false,
+                error: { message: error.message || 'Failed to fetch credit ledger' },
+            });
+        }
+    }
+    // Alias for backward compatibility
+    static async purchasePlan(req, res) {
+        return await CreditsController.verifyPayment(req, res);
     }
 }
 exports.CreditsController = CreditsController;

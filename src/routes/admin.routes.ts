@@ -32,4 +32,27 @@ router.put('/settings', AdminController.updateSetting);
 router.get('/locations', AdminController.getAllLocations);
 router.patch('/locations/toggle', AdminController.toggleLocation);
 
+// Categories & Subcategories Governance
+router.post('/categories', AdminController.createCategory);
+router.put('/categories/:id', AdminController.updateCategory);
+router.delete('/categories/:id', AdminController.deleteCategory);
+router.post('/subcategories', AdminController.createSubcategory);
+router.put('/subcategories/:id', AdminController.updateSubcategory);
+router.delete('/subcategories/:id', AdminController.deleteSubcategory);
+
+// Professional Plans Governance (Section 13, 14)
+router.get('/plans', AdminController.getPlans);
+router.post('/plans', AdminController.createPlan);
+router.put('/plans/:id', AdminController.updatePlan);
+
+// Customer Boost Packages Governance (Section 25)
+router.get('/boost-packages', AdminController.getBoostPackages);
+router.post('/boost-packages', AdminController.createBoostPackage);
+router.put('/boost-packages/:id', AdminController.updateBoostPackage);
+
+// Credit Batches & Audit Ledger (Section 18, 20, 117)
+router.get('/credits/batches', AdminController.getCreditBatches);
+router.get('/credits/ledger', AdminController.getCreditLedger);
+router.post('/credits/process-expired', AdminController.triggerBatchExpiry);
+
 export default router;

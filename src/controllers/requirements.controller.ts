@@ -265,14 +265,21 @@ export class RequirementsController {
             },
           },
         },
-        orderBy: { createdAt: 'desc' },
+        orderBy: [
+          { boostPriority: 'desc' },
+          { createdAt: 'desc' },
+        ],
       });
 
+      const now = new Date();
       const enriched = await Promise.all(
         requirements.map(async (item) => {
           const creditsRequired = await CreditService.calculateFee(item.budgetMin, item.budgetMax);
+          const isBoostActive = Boolean(item.isBoosted && item.boostExpiresAt && new Date(item.boostExpiresAt) > now);
           return {
             ...item,
+            isBoosted: isBoostActive,
+            boostPriority: isBoostActive ? item.boostPriority : 0,
             minimumBudget: item.budgetMin,
             maximumBudget: item.budgetMax,
             creditsRequired,
@@ -380,11 +387,15 @@ export class RequirementsController {
       }
 
       const creditsRequired = await CreditService.calculateFee(requirement.budgetMin, requirement.budgetMax);
+      const now = new Date();
+      const isBoostActive = Boolean(requirement.isBoosted && requirement.boostExpiresAt && new Date(requirement.boostExpiresAt) > now);
 
       return res.status(200).json({
         success: true,
         data: {
           ...requirement,
+          isBoosted: isBoostActive,
+          boostPriority: isBoostActive ? requirement.boostPriority : 0,
           minimumBudget: requirement.budgetMin,
           maximumBudget: requirement.budgetMax,
           creditsRequired,
@@ -439,6 +450,15 @@ export class RequirementsController {
         where: { id },
         data: { status },
       });
+
+      // Section 23: Automatic refund of all applicant credits when requirement is cancelled
+      if (status === 'CANCELLED') {
+        try {
+          await CreditService.refundAllApplicationsForRequirement(id, 'CUSTOMER_CANCELLED');
+        } catch (refundErr) {
+          console.error(`Failed to process credit refunds for cancelled requirement ${id}:`, refundErr);
+        }
+      }
 
       return res.status(200).json({
         success: true,
