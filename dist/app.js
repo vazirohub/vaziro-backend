@@ -12,16 +12,8 @@ const routes_1 = __importDefault(require("./routes"));
 const error_middleware_1 = require("./middlewares/error.middleware");
 const auto_migrate_1 = require("./lib/auto-migrate");
 const app = (0, express_1.default)();
-// Ensure DB schema is in sync on server initialization
+// Ensure DB schema is in sync on server initialization (non-blocking)
 (0, auto_migrate_1.ensureDatabaseSchema)().catch(() => { });
-let schemaReady = false;
-app.use(async (_req, _res, next) => {
-    if (!schemaReady) {
-        await (0, auto_migrate_1.ensureDatabaseSchema)().catch(() => { });
-        schemaReady = true;
-    }
-    next();
-});
 // Security Headers
 app.use((0, helmet_1.default)());
 // CORS Configuration

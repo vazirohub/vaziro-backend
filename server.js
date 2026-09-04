@@ -7,14 +7,6 @@ if (!process.env.DATABASE_URL) {
   process.env.DATABASE_URL = `file:${dbPath}`;
 }
 
-// Automatically sync schema on server boot
-try {
-  const { execSync } = require('child_process');
-  execSync('npx prisma db push --skip-generate --accept-data-loss', { stdio: 'ignore' });
-} catch (err) {
-  console.warn('[Server] DB sync notice:', err.message);
-}
-
 const distServer = path.join(__dirname, 'dist', 'server.js');
 
 if (fs.existsSync(distServer)) {

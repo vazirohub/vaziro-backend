@@ -9,17 +9,8 @@ import { ensureDatabaseSchema } from './lib/auto-migrate';
 
 const app = express();
 
-// Ensure DB schema is in sync on server initialization
+// Ensure DB schema is in sync on server initialization (non-blocking)
 ensureDatabaseSchema().catch(() => {});
-
-let schemaReady = false;
-app.use(async (_req, _res, next) => {
-  if (!schemaReady) {
-    await ensureDatabaseSchema().catch(() => {});
-    schemaReady = true;
-  }
-  next();
-});
 
 // Security Headers
 app.use(helmet());
