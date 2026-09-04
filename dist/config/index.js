@@ -63,4 +63,10 @@ exports.config = {
         fromEmail: process.env.RESEND_FROM_EMAIL || 'Vaziro <noreply@vaziro.in>',
         supportEmail: process.env.RESEND_SUPPORT_EMAIL || 'support@vaziro.in',
     },
+    gemini: {
+        apiKey: process.env.GEMINI_API_KEY || '',
+        projectName: process.env.GEMINI_PROJECT_NAME || 'projects/530691641234',
+        projectNumber: process.env.GEMINI_PROJECT_NUMBER || '530691641234',
+        model: process.env.GEMINI_MODEL || 'gemini-flash-latest',
+    },
 };
