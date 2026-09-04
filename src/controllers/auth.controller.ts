@@ -85,7 +85,9 @@ const loginSchema = z.object({
 
 const registerSchema = z.object({
   name: z.string().min(2, 'Name is required and must have at least 2 characters.'),
-  phone: z.string().min(10, 'Valid 10-digit Indian mobile number is required.'),
+  phone: z.string().refine((p) => p.replace(/\D/g, '').length >= 10, {
+    message: 'Valid 10-digit Indian mobile number is required.',
+  }),
   email: z.string({ required_error: 'Email is required.' }).email('Please provide a valid email address.').min(5, 'Email is required.'),
   password: z.string().min(6, 'Password must be at least 6 characters.'),
   role: z.enum(['CUSTOMER', 'PROFESSIONAL']).default('CUSTOMER'),
@@ -790,26 +792,42 @@ export class AuthController {
       const body = loginSchema.parse(req.body);
       const rawIdentifier = (body.identifier || body.email || body.phone || '').trim();
       const isEmail = rawIdentifier.includes('@');
-      const cleanDigits = rawIdentifier.replace(/\D/g, '');
-      const formattedPhone = cleanDigits.length === 10 ? `+91${cleanDigits}` : rawIdentifier;
+      let user: any = null;
 
-      const user = await prisma.user.findFirst({
-        where: isEmail
-          ? { email: rawIdentifier.toLowerCase() }
-          : {
-              OR: [
-                { phone: formattedPhone },
-                { phone: rawIdentifier },
-              ],
+      if (isEmail) {
+        user = await prisma.user.findFirst({
+          where: { email: rawIdentifier.toLowerCase() },
+          include: {
+            roles: { include: { role: true } },
+            customerProfile: true,
+            professionalProfile: {
+              include: { creditWallet: true, verification: true },
             },
-        include: {
-          roles: { include: { role: true } },
-          customerProfile: true,
-          professionalProfile: {
-            include: { creditWallet: true, verification: true },
           },
-        },
-      });
+        });
+      } else {
+        const cleanDigits = rawIdentifier.replace(/\D/g, '');
+        const last10 = cleanDigits.slice(-10);
+        const canonical = last10.length === 10 ? `+91${last10}` : rawIdentifier;
+
+        user = await prisma.user.findFirst({
+          where: {
+            OR: [
+              { phone: canonical },
+              { phone: last10 },
+              { phone: `91${last10}` },
+              { phone: rawIdentifier },
+            ],
+          },
+          include: {
+            roles: { include: { role: true } },
+            customerProfile: true,
+            professionalProfile: {
+              include: { creditWallet: true, verification: true },
+            },
+          },
+        });
+      }
 
       if (!user || !user.passwordHash) {
         return res.status(401).json({
@@ -867,7 +885,7 @@ export class AuthController {
             phone: user.phone,
             firstName: user.firstName,
             lastName: user.lastName,
-            roles: user.roles.map((r) => r.role.name),
+            roles: user.roles.map((r: any) => r.role.name),
             customerProfile: user.customerProfile,
             professionalProfile: user.professionalProfile,
           },
@@ -883,14 +901,15 @@ export class AuthController {
       const { name, phone, email, password, role } = registerSchema.parse(req.body);
 
       const cleanDigits = phone.replace(/\D/g, '');
-      const formattedPhone = cleanDigits.length === 10 ? `+91${cleanDigits}` : phone.trim();
+      const last10 = cleanDigits.slice(-10);
+      const formattedPhone = last10.length === 10 ? `+91${last10}` : phone.trim();
 
       // Check if user already exists
       const existingUser = await prisma.user.findFirst({
         where: {
           OR: [
             { phone: formattedPhone },
-            ...(cleanDigits.length >= 10 ? [{ phone: cleanDigits.slice(-10) }, { phone: `91${cleanDigits.slice(-10)}` }] : []),
+            ...(last10.length === 10 ? [{ phone: last10 }, { phone: `91${last10}` }] : []),
             ...(email ? [{ email: email.toLowerCase().trim() }] : []),
           ],
         },
