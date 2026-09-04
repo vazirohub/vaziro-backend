@@ -11,4 +11,7 @@ router.get('/', auth_middleware_1.authenticate, jobs_controller_1.JobsController
 // Job details & status advancement
 router.get('/:id', auth_middleware_1.authenticate, jobs_controller_1.JobsController.getJobDetails);
 router.patch('/:id/status', auth_middleware_1.authenticate, jobs_controller_1.JobsController.updateStatus);
+router.patch('/:id/work-status', auth_middleware_1.authenticate, jobs_controller_1.JobsController.updateWorkStatus);
+router.post('/:id/confirm-completion', auth_middleware_1.authenticate, jobs_controller_1.JobsController.confirmCompletion);
+router.post('/:id/dispute', auth_middleware_1.authenticate, jobs_controller_1.JobsController.raiseDispute);
 exports.default = router;

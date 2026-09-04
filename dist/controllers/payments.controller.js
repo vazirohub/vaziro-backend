@@ -608,7 +608,10 @@ class PaymentsController {
                 return res.status(404).json({ success: false, error: { message: 'Job not found' } });
             }
             if (job.customer.userId !== userId && !req.user?.roles.includes('ADMIN')) {
-                return res.status(403).json({ success: false, error: { message: 'Only the customer or platform admin can release payment.' } });
+                return res.status(403).json({ success: false, error: { message: 'Forbidden: Only the customer or platform admin can release payment. Professionals cannot release payments.' } });
+            }
+            if (job.status === 'DISPUTED' || job.paymentStatus === 'DISPUTED') {
+                return res.status(400).json({ success: false, error: { message: 'Cannot release payment: This contract is currently in dispute.' } });
             }
             const totalAmount = job.agreedPrice;
             const settingPlatformFee = await prisma_1.prisma.systemSetting.findUnique({
@@ -624,7 +627,10 @@ class PaymentsController {
             const result = await prisma_1.prisma.$transaction(async (tx) => {
                 const updatedJob = await tx.job.update({
                     where: { id: job.id },
-                    data: { status: 'PAYMENT_RELEASED' },
+                    data: {
+                        status: 'COMPLETED',
+                        paymentStatus: 'RELEASED',
+                    },
                 });
                 await tx.jobStatusHistory.create({
                     data: {

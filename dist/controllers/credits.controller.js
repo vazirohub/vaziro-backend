@@ -351,5 +351,56 @@ class CreditsController {
     static async purchasePlan(req, res) {
         return await CreditsController.verifyPayment(req, res);
     }
+    /**
+     * GET /api/v1/credits/transactions
+     * View complete unified financial and credit transaction history (Section 1)
+     */
+    static async getTransactionHistory(req, res) {
+        try {
+            const userId = req.user?.id;
+            const prof = await prisma_1.prisma.professionalProfile.findUnique({
+                where: { userId },
+            });
+            if (!prof) {
+                return res.status(404).json({ success: false, error: { message: 'Profile not found' } });
+            }
+            const { type, limit, offset } = req.query;
+            const result = await credit_service_1.CreditService.getProfessionalTransactionHistory(prof.id, {
+                type: type ? String(type) : undefined,
+                limit: limit ? Number(limit) : 50,
+                offset: offset ? Number(offset) : 0,
+            });
+            return res.status(200).json({
+                success: true,
+                data: result,
+            });
+        }
+        catch (error) {
+            return res.status(500).json({
+                success: false,
+                error: { message: error.message || 'Failed to fetch transaction history' },
+            });
+        }
+    }
+    /**
+     * POST /api/v1/credits/process-expired-requirements
+     * Automatic background worker endpoint to expire unhired requirements and refund candidate applications (Section 5)
+     */
+    static async processExpiredRequirements(req, res) {
+        try {
+            const results = await credit_service_1.CreditService.processExpiredRequirements(30);
+            return res.status(200).json({
+                success: true,
+                message: `Processed ${results.length} expired requirements and refunded candidate applications.`,
+                data: results,
+            });
+        }
+        catch (error) {
+            return res.status(500).json({
+                success: false,
+                error: { message: error.message || 'Failed to process expired requirements' },
+            });
+        }
+    }
 }
 exports.CreditsController = CreditsController;

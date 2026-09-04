@@ -105,6 +105,13 @@ export class QuotationsController {
           },
         });
 
+        if (deduction.ledgerEntry?.id) {
+          await tx.creditLedger.update({
+            where: { id: deduction.ledgerEntry.id },
+            data: { applicationId: application.id },
+          });
+        }
+
         // 3. Create quotation linked to application
         const quotation = await tx.quotation.create({
           data: {

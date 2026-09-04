@@ -2,6 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.JobsController = void 0;
 const prisma_1 = require("../lib/prisma");
+const credit_service_1 = require("../services/credit.service");
 // Controlled status transition map
 const VALID_TRANSITIONS = {
     HIRED: ['SCHEDULED', 'CANCELLED', 'DISPUTED'],
@@ -82,10 +83,21 @@ class JobsController {
                         currency: 'INR',
                         scheduledStartTime: quotation.proposedStartDate || new Date(),
                         status: 'HIRED',
+                        workStatus: 'PREPARING',
+                        paymentStatus: usePaymentProtection ? 'PAYMENT_PENDING' : 'NOT_REQUIRED',
                         paymentProtectionEnabled: Boolean(usePaymentProtection),
                     },
                 });
-                // 5. Record initial JobStatusHistory
+                // 5. Mark hired application HIRED
+                if (quotation.applicationId) {
+                    await tx.application.update({
+                        where: { id: quotation.applicationId },
+                        data: { status: 'HIRED' },
+                    });
+                }
+                // 6. Automatically refund all other non-hired applicants (Sections 4, 6, 11)
+                await credit_service_1.CreditService.refundNonHiredApplicants(quotation.requirementId, quotation.professionalProfileId, tx);
+                // 7. Record initial JobStatusHistory
                 await tx.jobStatusHistory.create({
                     data: {
                         jobId: newJob.id,
@@ -211,6 +223,219 @@ class JobsController {
             return res.status(500).json({
                 success: false,
                 error: { message: error.message || 'Failed to update job status' },
+            });
+        }
+    }
+    /**
+     * PATCH /api/v1/jobs/:id/work-status (Section 12, 21, 22)
+     * Only the hired Professional can update operational work progress.
+     */
+    static async updateWorkStatus(req, res) {
+        try {
+            const { id } = req.params;
+            const { workStatus, notes } = req.body;
+            const userId = req.user?.id;
+            if (!workStatus) {
+                return res.status(400).json({ success: false, error: { message: 'workStatus is required.' } });
+            }
+            const job = await prisma_1.prisma.job.findUnique({
+                where: { id },
+                include: { professional: true, customer: true },
+            });
+            if (!job) {
+                return res.status(404).json({ success: false, error: { message: 'Job not found.' } });
+            }
+            // STRICT PERMISSION: Only the hired professional (or admin) can update work status
+            const isHiredProf = job.professional.userId === userId;
+            const isAdmin = req.user?.roles.some((r) => ['ADMIN', 'SUPER_ADMIN'].includes(r));
+            if (!isHiredProf && !isAdmin) {
+                return res.status(403).json({
+                    success: false,
+                    error: { message: 'Forbidden: Only the hired service professional can update operational work status.' },
+                });
+            }
+            const allowedWorkStatuses = ['PREPARING', 'ON_THE_WAY', 'WORK_STARTED', 'WORK_COMPLETED'];
+            if (!allowedWorkStatuses.includes(workStatus)) {
+                return res.status(400).json({
+                    success: false,
+                    error: { message: `Invalid work status. Allowed: ${allowedWorkStatuses.join(', ')}` },
+                });
+            }
+            const updatedJob = await prisma_1.prisma.$transaction(async (tx) => {
+                const u = await tx.job.update({
+                    where: { id },
+                    data: {
+                        workStatus,
+                        status: workStatus === 'WORK_COMPLETED' ? 'WORK_COMPLETED' : 'IN_PROGRESS',
+                        actualStartTime: workStatus === 'WORK_STARTED' ? new Date() : job.actualStartTime,
+                        actualEndTime: workStatus === 'WORK_COMPLETED' ? new Date() : job.actualEndTime,
+                    },
+                });
+                await tx.jobStatusHistory.create({
+                    data: {
+                        jobId: id,
+                        previousStatus: job.workStatus || job.status,
+                        newStatus: workStatus,
+                        changedByUserId: userId,
+                        reason: notes || `Professional updated operational work status to ${workStatus}`,
+                    },
+                });
+                return u;
+            });
+            return res.status(200).json({
+                success: true,
+                message: `Work status updated to ${workStatus}.`,
+                data: updatedJob,
+            });
+        }
+        catch (error) {
+            return res.status(500).json({
+                success: false,
+                error: { message: error.message || 'Failed to update work status.' },
+            });
+        }
+    }
+    /**
+     * POST /api/v1/jobs/:id/confirm-completion (Section 14, 15, 21, 22)
+     * Only the Customer can confirm final work completion and authorize payment release.
+     */
+    static async confirmCompletion(req, res) {
+        try {
+            const { id } = req.params;
+            const userId = req.user?.id;
+            const job = await prisma_1.prisma.job.findUnique({
+                where: { id },
+                include: { customer: true, professional: true },
+            });
+            if (!job) {
+                return res.status(404).json({ success: false, error: { message: 'Job not found.' } });
+            }
+            // STRICT PERMISSION: Only the Customer who owns this job (or admin) can confirm completion
+            const isCustomer = job.customer.userId === userId;
+            const isAdmin = req.user?.roles.some((r) => ['ADMIN', 'SUPER_ADMIN'].includes(r));
+            if (!isCustomer && !isAdmin) {
+                return res.status(403).json({
+                    success: false,
+                    error: { message: 'Forbidden: Only the customer who posted the requirement can confirm final work completion.' },
+                });
+            }
+            if (job.workStatus !== 'WORK_COMPLETED' &&
+                job.status !== 'WORK_COMPLETED' &&
+                job.status !== 'SERVICE_COMPLETED') {
+                return res.status(400).json({
+                    success: false,
+                    error: { message: 'Cannot confirm completion before the professional has marked work as completed.' },
+                });
+            }
+            const updatedJob = await prisma_1.prisma.$transaction(async (tx) => {
+                const u = await tx.job.update({
+                    where: { id },
+                    data: {
+                        status: 'CUSTOMER_CONFIRMED',
+                        paymentStatus: 'READY_FOR_RELEASE',
+                        customerConfirmedAt: new Date(),
+                    },
+                });
+                await tx.jobStatusHistory.create({
+                    data: {
+                        jobId: id,
+                        previousStatus: job.status,
+                        newStatus: 'CUSTOMER_CONFIRMED',
+                        changedByUserId: userId,
+                        reason: 'Customer confirmed work completion. Payment authorized and ready for release.',
+                    },
+                });
+                // Increment customer and professional completed counts
+                await tx.customerProfile.update({
+                    where: { id: job.customerId },
+                    data: { jobsCompletedCount: { increment: 1 } },
+                });
+                await tx.professionalProfile.update({
+                    where: { id: job.professionalProfileId },
+                    data: { completedJobsCount: { increment: 1 } },
+                });
+                return u;
+            });
+            return res.status(200).json({
+                success: true,
+                message: 'Work completion confirmed successfully. Payment is now ready for release.',
+                data: updatedJob,
+            });
+        }
+        catch (error) {
+            return res.status(500).json({
+                success: false,
+                error: { message: error.message || 'Failed to confirm work completion.' },
+            });
+        }
+    }
+    /**
+     * POST /api/v1/jobs/:id/dispute (Section 20)
+     * If customer reports issue: hold payment and transition to DISPUTED.
+     */
+    static async raiseDispute(req, res) {
+        try {
+            const { id } = req.params;
+            const { reason, description } = req.body;
+            const userId = req.user?.id;
+            if (!description) {
+                return res.status(400).json({ success: false, error: { message: 'Description of dispute issue is required.' } });
+            }
+            const job = await prisma_1.prisma.job.findUnique({
+                where: { id },
+                include: { customer: true, professional: true },
+            });
+            if (!job) {
+                return res.status(404).json({ success: false, error: { message: 'Job not found.' } });
+            }
+            const isCustomer = job.customer.userId === userId;
+            const isProf = job.professional.userId === userId;
+            const isAdmin = req.user?.roles.some((r) => ['ADMIN', 'SUPER_ADMIN'].includes(r));
+            if (!isCustomer && !isProf && !isAdmin) {
+                return res.status(403).json({ success: false, error: { message: 'Forbidden' } });
+            }
+            const effectiveReason = reason || 'Work Not Completed / Issue Reported';
+            const updatedJob = await prisma_1.prisma.$transaction(async (tx) => {
+                const u = await tx.job.update({
+                    where: { id },
+                    data: {
+                        status: 'DISPUTED',
+                        paymentStatus: 'DISPUTED',
+                        disputeReason: `${effectiveReason}: ${description}`,
+                        disputedAt: new Date(),
+                        disputeStatus: 'OPEN',
+                    },
+                });
+                await tx.dispute.create({
+                    data: {
+                        jobId: id,
+                        raisedByUserId: userId,
+                        reason: `${effectiveReason}: ${description}`,
+                        amountDisputed: job.agreedPrice,
+                        status: 'OPEN',
+                    },
+                });
+                await tx.jobStatusHistory.create({
+                    data: {
+                        jobId: id,
+                        previousStatus: job.status,
+                        newStatus: 'DISPUTED',
+                        changedByUserId: userId,
+                        reason: `Dispute raised: ${effectiveReason}`,
+                    },
+                });
+                return u;
+            });
+            return res.status(200).json({
+                success: true,
+                message: 'Dispute submitted. Payment has been placed on hold pending review.',
+                data: updatedJob,
+            });
+        }
+        catch (error) {
+            return res.status(500).json({
+                success: false,
+                error: { message: error.message || 'Failed to raise dispute.' },
             });
         }
     }

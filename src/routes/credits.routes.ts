@@ -12,8 +12,10 @@ router.post('/calculate-fee', CreditsController.calculateFee);
 router.get('/wallet', authenticate, requireRoles('PROFESSIONAL', 'ADMIN', 'SUPER_ADMIN'), CreditsController.getWallet);
 router.get('/batches', authenticate, requireRoles('PROFESSIONAL', 'ADMIN', 'SUPER_ADMIN'), CreditsController.getBatches);
 router.get('/ledger', authenticate, requireRoles('PROFESSIONAL', 'ADMIN', 'SUPER_ADMIN'), CreditsController.getLedger);
+router.get('/transactions', authenticate, requireRoles('PROFESSIONAL', 'ADMIN', 'SUPER_ADMIN'), CreditsController.getTransactionHistory);
 router.post('/purchase', authenticate, requireRoles('PROFESSIONAL', 'ADMIN', 'SUPER_ADMIN'), CreditsController.purchasePlan);
 router.post('/create-order', authenticate, requireRoles('PROFESSIONAL', 'ADMIN', 'SUPER_ADMIN'), CreditsController.createOrder);
 router.post('/verify-payment', authenticate, requireRoles('PROFESSIONAL', 'ADMIN', 'SUPER_ADMIN'), CreditsController.verifyPayment);
+router.post('/process-expired-requirements', authenticate, requireRoles('ADMIN', 'SUPER_ADMIN'), CreditsController.processExpiredRequirements);
 
 export default router;

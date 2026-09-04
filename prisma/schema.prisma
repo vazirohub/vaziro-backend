@@ -367,6 +367,7 @@ model Requirement {
   isBoosted             Boolean      @default(false)
   boostPriority         Int          @default(0)
   boostExpiresAt        DateTime?
+  expiresAt             DateTime?
   createdAt             DateTime     @default(now())
   updatedAt             DateTime     @updatedAt
 
@@ -420,6 +421,11 @@ model Application {
   batchAllocation       String?             // JSON snapshot of batch deduction
   aiMatchScore          Float?
   status                String              @default("SUBMITTED") // SUBMITTED, SHORTLISTED, HIRED, REJECTED, WITHDRAWN
+  creditsRefunded       Int                 @default(0)
+  refundStatus          String?             // NONE, REFUNDED, FAILED
+  refundReason          String?
+  refundedAt            DateTime?
+  isRefunded            Boolean             @default(false)
   createdAt             DateTime            @default(now())
   updatedAt             DateTime            @updatedAt
 
@@ -488,6 +494,12 @@ model Job {
   agreedPrice              Float
   currency                 String              @default("INR")
   status                   String              @default("HIRED") // HIRED, SCHEDULED, PREPARING, ON_THE_WAY, ARRIVED, SERVICE_STARTED, SERVICE_COMPLETED, CUSTOMER_APPROVED, PAYMENT_RELEASED, CANCELLED, DISPUTED, CLOSED
+  workStatus               String?             @default("PREPARING") // PREPARING, ON_THE_WAY, WORK_STARTED, WORK_COMPLETED
+  paymentStatus            String              @default("PAYMENT_PENDING") // NOT_REQUIRED, PAYMENT_PENDING, PAYMENT_SECURED, READY_FOR_RELEASE, RELEASED, REFUNDED, DISPUTED
+  customerConfirmedAt      DateTime?
+  disputeReason            String?
+  disputedAt               DateTime?
+  disputeStatus            String?
   paymentProtectionEnabled Boolean             @default(false)
   scheduledStartTime       DateTime?
   scheduledEndTime         DateTime?
@@ -937,11 +949,17 @@ model CreditLedger {
   professionalProfileId String
   creditBatchId         String?
   transactionType       String              // PLAN_PURCHASE, BONUS_CREDIT, APPLICATION_DEBIT, APPLICATION_REFUND, REFUND, EXPIRATION, ADMIN_ADJUSTMENT, REVERSAL
+  direction             String?             // CREDIT, DEBIT
   amount                Int                 // Signed integer (+50, -15, etc.)
   balanceBefore         Int
   balanceAfter          Int
   referenceEntityId     String?             // e.g. Requirement ID, PlanPurchase ID, or Batch ID
+  requirementId         String?
+  applicationId         String?
+  jobId                 String?
+  paymentId             String?
   reason                String?
+  status                String              @default("COMPLETED") // COMPLETED, PENDING, FAILED, CANCELLED
   actorAdminId          String?
   createdAt             DateTime            @default(now())
 

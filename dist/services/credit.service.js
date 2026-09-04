@@ -115,7 +115,7 @@ class CreditService {
         const wallet = await this.getOrCreateWallet(professionalProfileId);
         const now = new Date();
         const thirtyDaysFromNow = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
-        const [activeBatches, latestLedger, latestPlanPurchase] = await Promise.all([
+        const [activeBatches, refundPendingBatches, refundedApps, latestLedger, latestPlanPurchase] = await Promise.all([
             prisma_1.prisma.creditBatch.findMany({
                 where: {
                     professionalProfileId,
@@ -123,6 +123,19 @@ class CreditService {
                     expiresAt: { gt: now },
                 },
                 orderBy: { expiresAt: 'asc' },
+            }),
+            prisma_1.prisma.creditBatch.findMany({
+                where: {
+                    professionalProfileId,
+                    status: 'REFUND_PENDING',
+                },
+            }),
+            prisma_1.prisma.application.aggregate({
+                where: {
+                    professionalProfileId,
+                    isRefunded: true,
+                },
+                _sum: { creditsRefunded: true },
             }),
             prisma_1.prisma.creditLedger.findMany({
                 where: { professionalProfileId },
@@ -155,16 +168,23 @@ class CreditService {
         const refundableCredits = purchasedCredits;
         const refundableAmountInr = refundableCredits * 10; // 1 Credit = ₹10
         const visibilityTier = latestPlanPurchase?.plan?.visibilityTier || 'STANDARD';
+        const creditsPendingRefund = refundPendingBatches.reduce((acc, b) => acc + b.remainingPurchasedCredits, 0);
+        const creditsRefunded = refundedApps._sum.creditsRefunded || 0;
         return {
             walletId: wallet.id,
             balance: wallet.balance,
             availableCredits: wallet.balance,
+            creditValueInr: wallet.balance * 10,
             purchasedCredits,
             bonusCredits,
             expiringCredits,
+            creditsExpiringSoon: expiringCredits,
             nextExpiryDate,
             refundableCredits,
             refundableAmountInr,
+            creditsPendingRefund,
+            creditsRefunded,
+            creditsUsed: wallet.lifetimeSpent,
             visibilityTier,
             activeBatchesCount: activeBatches.length,
             activeBatches,
@@ -261,11 +281,14 @@ class CreditService {
                     professionalProfileId,
                     creditBatchId: primaryBatchId,
                     transactionType: 'APPLICATION_DEBIT',
+                    direction: 'DEBIT',
                     amount: -creditsCost,
                     balanceBefore,
                     balanceAfter: newBalance,
                     referenceEntityId: requirementId,
+                    requirementId,
                     reason: `Application submitted for Requirement #${requirementId.substring(0, 8)}`,
+                    status: 'COMPLETED',
                 },
             });
             // 5. Also record in legacy CreditTransaction for backward compatibility
@@ -634,19 +657,455 @@ class CreditService {
      */
     static async refundAllApplicationsForRequirement(requirementId, reason = 'CUSTOMER_CANCELLED') {
         const applications = await prisma_1.prisma.application.findMany({
-            where: { requirementId, creditsSpent: { gt: 0 } },
+            where: { requirementId, isRefunded: false, creditsSpent: { gt: 0 } },
         });
         const results = [];
         for (const app of applications) {
             try {
-                const res = await this.refundCreditsForCancellation(app.professionalProfileId, requirementId, app.creditsSpent, reason);
+                const res = await this.refundApplication(app.id, reason);
                 results.push(res);
             }
             catch (err) {
-                console.error(`Failed to refund professional ${app.professionalProfileId} for requirement ${requirementId}:`, err);
+                console.error(`Failed to refund professional application ${app.id} for requirement ${requirementId}:`, err);
             }
         }
         return results;
+    }
+    /**
+     * Idempotently and atomically refund credits spent on an application (Sections 4, 5, 6)
+     */
+    static async refundApplication(applicationId, reason = 'NOT_SELECTED', customTx) {
+        const executeRefund = async (tx) => {
+            // 1. Fetch application with relation context
+            const app = await tx.application.findUnique({
+                where: { id: applicationId },
+                include: {
+                    requirement: true,
+                    professional: true,
+                },
+            });
+            if (!app) {
+                throw new Error('Application not found.');
+            }
+            // Idempotency: single application can only receive refund once
+            if (app.isRefunded || app.refundStatus === 'REFUNDED') {
+                return {
+                    alreadyRefunded: true,
+                    creditsRefunded: app.creditsRefunded,
+                    application: app,
+                };
+            }
+            const creditsToRefund = app.creditsSpent || app.creditsCharged || 0;
+            if (creditsToRefund <= 0) {
+                const updatedApp = await tx.application.update({
+                    where: { id: applicationId },
+                    data: {
+                        isRefunded: true,
+                        refundStatus: 'REFUNDED',
+                        creditsRefunded: 0,
+                        refundReason: reason,
+                        refundedAt: new Date(),
+                    },
+                });
+                return { alreadyRefunded: false, creditsRefunded: 0, application: updatedApp };
+            }
+            // 2. Fetch or initialize professional wallet
+            let wallet = await tx.creditWallet.findUnique({
+                where: { professionalProfileId: app.professionalProfileId },
+            });
+            if (!wallet) {
+                wallet = await tx.creditWallet.create({
+                    data: {
+                        professionalProfileId: app.professionalProfileId,
+                        balance: 0,
+                        lifetimePurchased: 0,
+                        lifetimeSpent: 0,
+                    },
+                });
+            }
+            const balanceBefore = wallet.balance;
+            const newBalance = balanceBefore + creditsToRefund;
+            // 3. Atomically restore credits in wallet
+            const updatedWallet = await tx.creditWallet.update({
+                where: { id: wallet.id },
+                data: {
+                    balance: newBalance,
+                    lifetimeSpent: Math.max(0, wallet.lifetimeSpent - creditsToRefund),
+                },
+            });
+            // 4. Update application state
+            const updatedApp = await tx.application.update({
+                where: { id: applicationId },
+                data: {
+                    isRefunded: true,
+                    refundStatus: 'REFUNDED',
+                    creditsRefunded: creditsToRefund,
+                    refundReason: reason,
+                    refundedAt: new Date(),
+                },
+            });
+            // 5. Restore batch credits if snapshot available
+            let primaryBatchId = null;
+            if (app.batchAllocation) {
+                try {
+                    const allocations = JSON.parse(app.batchAllocation);
+                    for (const alloc of allocations) {
+                        const batch = await tx.creditBatch.findUnique({ where: { id: alloc.batchId } });
+                        if (batch && batch.status === 'ACTIVE') {
+                            await tx.creditBatch.update({
+                                where: { id: batch.id },
+                                data: {
+                                    remainingPurchasedCredits: batch.remainingPurchasedCredits + alloc.deductedPurchased,
+                                    remainingBonusCredits: batch.remainingBonusCredits + alloc.deductedBonus,
+                                },
+                            });
+                            if (!primaryBatchId)
+                                primaryBatchId = batch.id;
+                        }
+                    }
+                }
+                catch {
+                    // ignore batch parse failure
+                }
+            }
+            // 6. Record in immutable CreditLedger
+            const friendlyReason = reason === 'NOT_SELECTED'
+                ? `Credits Refunded: Professional not selected for "${app.requirement?.title || 'Requirement'}"`
+                : reason === 'REQUIREMENT_EXPIRED'
+                    ? `Credits Refunded: Requirement expired without hiring for "${app.requirement?.title || 'Requirement'}"`
+                    : `Credits Refunded: ${reason}`;
+            const ledgerEntry = await tx.creditLedger.create({
+                data: {
+                    professionalProfileId: app.professionalProfileId,
+                    creditBatchId: primaryBatchId,
+                    transactionType: 'APPLICATION_REFUND',
+                    direction: 'CREDIT',
+                    amount: creditsToRefund,
+                    balanceBefore,
+                    balanceAfter: newBalance,
+                    referenceEntityId: app.requirementId,
+                    requirementId: app.requirementId,
+                    applicationId: app.id,
+                    reason: friendlyReason,
+                    status: 'COMPLETED',
+                },
+            });
+            // 7. Legacy CreditTransaction for backward compatibility
+            await tx.creditTransaction.create({
+                data: {
+                    creditWalletId: wallet.id,
+                    amount: creditsToRefund,
+                    balanceAfter: newBalance,
+                    transactionType: 'APPLICATION_REFUND',
+                    referenceEntityId: app.requirementId,
+                    notes: friendlyReason,
+                },
+            });
+            // 8. Notification to professional
+            try {
+                const prof = await tx.professionalProfile.findUnique({
+                    where: { id: app.professionalProfileId },
+                    select: { userId: true },
+                });
+                if (prof?.userId) {
+                    await tx.notification.create({
+                        data: {
+                            userId: prof.userId,
+                            title: 'Credits Refunded',
+                            message: `+${creditsToRefund} Credits returned to your wallet (${friendlyReason}).`,
+                            type: 'WALLET_CREDIT_REFUND',
+                            actionUrl: '/credits',
+                        },
+                    });
+                }
+            }
+            catch {
+                // ignore notification errors
+            }
+            return {
+                alreadyRefunded: false,
+                creditsRefunded: creditsToRefund,
+                balanceRemaining: newBalance,
+                application: updatedApp,
+                ledgerEntry,
+            };
+        };
+        if (customTx) {
+            return await executeRefund(customTx);
+        }
+        return await prisma_1.prisma.$transaction(executeRefund);
+    }
+    /**
+     * Refund all non-hired applications for a requirement when another candidate is hired (Section 4, 11)
+     */
+    static async refundNonHiredApplicants(requirementId, hiredProfessionalProfileId, customTx) {
+        const run = async (tx) => {
+            const nonHiredApplications = await tx.application.findMany({
+                where: {
+                    requirementId,
+                    professionalProfileId: { not: hiredProfessionalProfileId },
+                    isRefunded: false,
+                },
+            });
+            const refundResults = [];
+            for (const app of nonHiredApplications) {
+                const res = await this.refundApplication(app.id, 'NOT_SELECTED', tx);
+                refundResults.push(res);
+            }
+            return refundResults;
+        };
+        if (customTx) {
+            return await run(customTx);
+        }
+        return await prisma_1.prisma.$transaction(run);
+    }
+    /**
+     * Automatic background worker: Expire unhired requirements and refund all candidate applications (Section 5)
+     */
+    static async processExpiredRequirements(expiryWindowDays = 30) {
+        const cutoffDate = new Date(Date.now() - expiryWindowDays * 24 * 60 * 60 * 1000);
+        const now = new Date();
+        const expiredRequirements = await prisma_1.prisma.requirement.findMany({
+            where: {
+                status: { in: ['PUBLISHED', 'RECEIVING_QUOTES', 'SHORTLISTED'] },
+                OR: [
+                    { expiresAt: { not: null, lte: now } },
+                    { expiresAt: null, createdAt: { lte: cutoffDate } },
+                ],
+            },
+            include: {
+                applications: {
+                    where: { isRefunded: false },
+                },
+            },
+        });
+        const results = [];
+        for (const req of expiredRequirements) {
+            const result = await prisma_1.prisma.$transaction(async (tx) => {
+                await tx.requirement.update({
+                    where: { id: req.id },
+                    data: { status: 'EXPIRED' },
+                });
+                const appRefunds = [];
+                for (const app of req.applications) {
+                    const refundRes = await this.refundApplication(app.id, 'REQUIREMENT_EXPIRED', tx);
+                    appRefunds.push(refundRes);
+                }
+                return {
+                    requirementId: req.id,
+                    title: req.title,
+                    applicationsRefunded: appRefunds.length,
+                    appRefunds,
+                };
+            });
+            results.push(result);
+        }
+        return results;
+    }
+    /**
+     * Get complete financial and credit transaction history for a professional (Section 1)
+     */
+    static async getProfessionalTransactionHistory(professionalProfileId, options = {}) {
+        const limit = options.limit || 50;
+        const offset = options.offset || 0;
+        // 1. Fetch Credit Ledger records
+        const ledgerRecords = await prisma_1.prisma.creditLedger.findMany({
+            where: { professionalProfileId },
+            include: {
+                batch: true,
+            },
+            orderBy: { createdAt: 'desc' },
+            take: 100,
+        });
+        // Extract requirement IDs to fetch titles in bulk
+        const requirementIds = Array.from(new Set(ledgerRecords
+            .map((r) => r.requirementId || r.referenceEntityId)
+            .filter(Boolean)));
+        const requirements = await prisma_1.prisma.requirement.findMany({
+            where: { id: { in: requirementIds } },
+            select: { id: true, title: true, status: true },
+        });
+        const reqMap = new Map(requirements.map((r) => [r.id, r]));
+        // 2. Fetch Job & Marketplace Payment records for this professional
+        const jobs = await prisma_1.prisma.job.findMany({
+            where: { professionalProfileId },
+            include: {
+                requirement: { select: { id: true, title: true } },
+                customer: { include: { user: { select: { firstName: true, lastName: true } } } },
+                payments: true,
+                marketplacePayment: true,
+                routeTransfers: true,
+                disputes: true,
+            },
+            orderBy: { createdAt: 'desc' },
+            take: 50,
+        });
+        // 3. Build unified transaction items
+        const transactions = [];
+        // Map credit ledgers
+        for (const item of ledgerRecords) {
+            const req = item.requirementId
+                ? reqMap.get(item.requirementId)
+                : item.referenceEntityId
+                    ? reqMap.get(item.referenceEntityId)
+                    : null;
+            let type = item.transactionType;
+            let displayType = 'Credit Transaction';
+            let direction = item.direction || (item.amount >= 0 ? 'CREDIT' : 'DEBIT');
+            if (type === 'APPLICATION_DEBIT') {
+                type = 'APPLICATION_CREDIT_DEBIT';
+                displayType = 'Credits Used';
+            }
+            else if (type === 'APPLICATION_REFUND') {
+                type = 'APPLICATION_CREDIT_REFUND';
+                displayType = 'Credits Refunded';
+            }
+            else if (type === 'PLAN_PURCHASE') {
+                type = 'CREDIT_PURCHASE';
+                displayType = 'Plan Purchase';
+            }
+            else if (type === 'BONUS_CREDIT') {
+                type = 'BONUS_CREDIT';
+                displayType = 'Bonus Credits';
+            }
+            else if (type === 'REFUND') {
+                type = 'CREDIT_90_DAY_REFUND';
+                displayType = '90-Day Credit Refund';
+            }
+            else if (type === 'EXPIRATION') {
+                type = 'CREDIT_EXPIRATION';
+                displayType = 'Credits Expired';
+            }
+            else if (type === 'ADMIN_ADJUSTMENT') {
+                type = 'ADMIN_CREDIT_ADJUSTMENT';
+                displayType = 'Admin Credit Adjustment';
+            }
+            transactions.push({
+                id: item.id,
+                professionalId: professionalProfileId,
+                type,
+                displayType,
+                amount: item.amount >= 0 ? `+${item.amount} Credits` : `${item.amount} Credits`,
+                rawAmount: item.amount,
+                creditAmount: Math.abs(item.amount),
+                currencyAmount: Math.abs(item.amount) * 10,
+                direction,
+                balanceBefore: item.balanceBefore,
+                balanceAfter: item.balanceAfter,
+                requirement: req ? { id: req.id, title: req.title } : null,
+                applicationId: item.applicationId,
+                jobId: item.jobId,
+                paymentId: item.paymentId,
+                razorpayReference: item.batch?.razorpayRefundId || null,
+                reason: item.reason || (direction === 'DEBIT' ? 'Application credit fee' : 'Credit adjustment'),
+                status: item.status || 'COMPLETED',
+                createdAt: item.createdAt,
+                completedAt: item.createdAt,
+            });
+        }
+        // Map financial payment events from jobs
+        for (const j of jobs) {
+            const req = j.requirement;
+            // If payment is secured
+            if (['PAYMENT_SECURED', 'READY_FOR_RELEASE', 'SERVICE_COMPLETED', 'CUSTOMER_APPROVED'].includes(j.paymentStatus) ||
+                j.payments.some((p) => p.status === 'CAPTURED')) {
+                const capturedPayment = j.payments.find((p) => p.status === 'CAPTURED');
+                transactions.push({
+                    id: `escrow_${j.id}`,
+                    professionalId: professionalProfileId,
+                    type: 'PAYMENT_SECURED',
+                    displayType: 'Payment Secured (Escrow)',
+                    amount: `₹${j.agreedPrice.toLocaleString('en-IN')}`,
+                    rawAmount: j.agreedPrice,
+                    creditAmount: null,
+                    currencyAmount: j.agreedPrice,
+                    direction: 'CREDIT',
+                    balanceBefore: null,
+                    balanceAfter: null,
+                    requirement: req ? { id: req.id, title: req.title } : null,
+                    jobId: j.id,
+                    paymentId: capturedPayment?.id || null,
+                    razorpayReference: capturedPayment?.razorpayPaymentId || null,
+                    reason: `Customer deposited contract amount of ₹${j.agreedPrice} into Vaziro Escrow Protection`,
+                    status: 'SECURED',
+                    createdAt: capturedPayment?.createdAt || j.createdAt,
+                    completedAt: capturedPayment?.capturedAt || null,
+                });
+            }
+            // If payment is released
+            if (j.paymentStatus === 'RELEASED' || j.status === 'PAYMENT_RELEASED' || j.status === 'COMPLETED') {
+                const netPayout = j.routeTransfers[0]?.amount
+                    ? j.routeTransfers[0].amount
+                    : j.agreedPrice * 0.94;
+                transactions.push({
+                    id: `payout_${j.id}`,
+                    professionalId: professionalProfileId,
+                    type: 'PAYMENT_RELEASED',
+                    displayType: 'Payment Released (Payout)',
+                    amount: `₹${netPayout.toLocaleString('en-IN')}`,
+                    rawAmount: netPayout,
+                    creditAmount: null,
+                    currencyAmount: netPayout,
+                    direction: 'CREDIT',
+                    balanceBefore: null,
+                    balanceAfter: null,
+                    requirement: req ? { id: req.id, title: req.title } : null,
+                    jobId: j.id,
+                    paymentId: j.marketplacePayment?.paymentId || null,
+                    razorpayReference: j.routeTransfers[0]?.razorpayTransferId || null,
+                    reason: `Customer approved work completion and released payment of ₹${netPayout} to your account`,
+                    status: 'COMPLETED',
+                    createdAt: j.updatedAt,
+                    completedAt: j.updatedAt,
+                });
+            }
+            // If disputed
+            if (j.paymentStatus === 'DISPUTED' || j.status === 'DISPUTED') {
+                transactions.push({
+                    id: `dispute_${j.id}`,
+                    professionalId: professionalProfileId,
+                    type: 'PAYMENT_DISPUTED',
+                    displayType: 'Payment Disputed (Held)',
+                    amount: `₹${j.agreedPrice.toLocaleString('en-IN')}`,
+                    rawAmount: j.agreedPrice,
+                    creditAmount: null,
+                    currencyAmount: j.agreedPrice,
+                    direction: 'DEBIT',
+                    balanceBefore: null,
+                    balanceAfter: null,
+                    requirement: req ? { id: req.id, title: req.title } : null,
+                    jobId: j.id,
+                    paymentId: null,
+                    razorpayReference: null,
+                    reason: j.disputeReason || j.disputes[0]?.reason || 'Customer reported an issue with delivery',
+                    status: 'DISPUTED',
+                    createdAt: j.disputedAt || j.updatedAt,
+                    completedAt: null,
+                });
+            }
+        }
+        // Sort descending by date
+        transactions.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+        // Filter by type if provided
+        let filtered = transactions;
+        if (options.type && options.type !== 'ALL') {
+            if (options.type === 'CREDITS') {
+                filtered = transactions.filter((t) => t.type.includes('CREDIT') || t.type.includes('PLAN'));
+            }
+            else if (options.type === 'PAYMENTS') {
+                filtered = transactions.filter((t) => t.type.includes('PAYMENT'));
+            }
+            else if (options.type === 'REFUNDS') {
+                filtered = transactions.filter((t) => t.type.includes('REFUND'));
+            }
+        }
+        const paginated = filtered.slice(offset, offset + limit);
+        return {
+            total: filtered.length,
+            limit,
+            offset,
+            transactions: paginated,
+        };
     }
 }
 exports.CreditService = CreditService;

@@ -381,5 +381,60 @@ export class CreditsController {
   static async purchasePlan(req: Request, res: Response) {
     return await CreditsController.verifyPayment(req, res);
   }
+
+  /**
+   * GET /api/v1/credits/transactions
+   * View complete unified financial and credit transaction history (Section 1)
+   */
+  static async getTransactionHistory(req: Request, res: Response) {
+    try {
+      const userId = req.user?.id;
+      const prof = await prisma.professionalProfile.findUnique({
+        where: { userId },
+      });
+
+      if (!prof) {
+        return res.status(404).json({ success: false, error: { message: 'Profile not found' } });
+      }
+
+      const { type, limit, offset } = req.query;
+
+      const result = await CreditService.getProfessionalTransactionHistory(prof.id, {
+        type: type ? String(type) : undefined,
+        limit: limit ? Number(limit) : 50,
+        offset: offset ? Number(offset) : 0,
+      });
+
+      return res.status(200).json({
+        success: true,
+        data: result,
+      });
+    } catch (error: any) {
+      return res.status(500).json({
+        success: false,
+        error: { message: error.message || 'Failed to fetch transaction history' },
+      });
+    }
+  }
+
+  /**
+   * POST /api/v1/credits/process-expired-requirements
+   * Automatic background worker endpoint to expire unhired requirements and refund candidate applications (Section 5)
+   */
+  static async processExpiredRequirements(req: Request, res: Response) {
+    try {
+      const results = await CreditService.processExpiredRequirements(30);
+      return res.status(200).json({
+        success: true,
+        message: `Processed ${results.length} expired requirements and refunded candidate applications.`,
+        data: results,
+      });
+    } catch (error: any) {
+      return res.status(500).json({
+        success: false,
+        error: { message: error.message || 'Failed to process expired requirements' },
+      });
+    }
+  }
 }
 
