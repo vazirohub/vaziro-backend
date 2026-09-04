@@ -11,4 +11,5 @@ router.get('/:id', requirements_controller_1.RequirementsController.getRequireme
 // Posting & state update
 router.post('/', auth_middleware_1.authenticate, (0, auth_middleware_1.requireRoles)('CUSTOMER', 'ADMIN', 'SUPER_ADMIN'), requirements_controller_1.RequirementsController.createRequirement);
 router.patch('/:id/status', auth_middleware_1.authenticate, requirements_controller_1.RequirementsController.updateStatus);
+router.delete('/:id', auth_middleware_1.authenticate, requirements_controller_1.RequirementsController.deleteRequirement);
 exports.default = router;

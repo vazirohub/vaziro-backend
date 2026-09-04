@@ -251,6 +251,7 @@ export class RequirementsController {
           category: true,
           subcategory: true,
           city: true,
+          pincode: true,
           customer: {
             include: {
               user: {
@@ -276,8 +277,11 @@ export class RequirementsController {
         requirements.map(async (item) => {
           const creditsRequired = await CreditService.calculateFee(item.budgetMin, item.budgetMax);
           const isBoostActive = Boolean(item.isBoosted && item.boostExpiresAt && new Date(item.boostExpiresAt) > now);
+          const cleanPincode = item.pincode?.pincode || (item.pincodeId && item.pincodeId.length === 6 && !item.pincodeId.includes('-') ? item.pincodeId : null);
           return {
             ...item,
+            pincodeId: cleanPincode,
+            pincode: cleanPincode,
             isBoosted: isBoostActive,
             boostPriority: isBoostActive ? item.boostPriority : 0,
             minimumBudget: item.budgetMin,
@@ -330,6 +334,7 @@ export class RequirementsController {
           category: true,
           subcategory: true,
           city: true,
+          pincode: true,
           _count: {
             select: { quotations: true, applications: true },
           },
@@ -339,11 +344,16 @@ export class RequirementsController {
 
       return res.status(200).json({
         success: true,
-        data: requirements.map((r) => ({
-          ...r,
-          minimumBudget: r.budgetMin,
-          maximumBudget: r.budgetMax,
-        })),
+        data: requirements.map((r) => {
+          const cleanPincode = r.pincode?.pincode || (r.pincodeId && r.pincodeId.length === 6 && !r.pincodeId.includes('-') ? r.pincodeId : null);
+          return {
+            ...r,
+            pincodeId: cleanPincode,
+            pincode: cleanPincode,
+            minimumBudget: r.budgetMin,
+            maximumBudget: r.budgetMax,
+          };
+        }),
       });
     } catch (error: any) {
       return res.status(500).json({
@@ -366,6 +376,7 @@ export class RequirementsController {
           category: true,
           subcategory: true,
           city: true,
+          pincode: true,
           customer: {
             include: {
               user: {
@@ -373,6 +384,7 @@ export class RequirementsController {
               },
             },
           },
+          attachments: true,
           _count: {
             select: { applications: true, quotations: true },
           },
@@ -389,11 +401,14 @@ export class RequirementsController {
       const creditsRequired = await CreditService.calculateFee(requirement.budgetMin, requirement.budgetMax);
       const now = new Date();
       const isBoostActive = Boolean(requirement.isBoosted && requirement.boostExpiresAt && new Date(requirement.boostExpiresAt) > now);
+      const cleanPincode = requirement.pincode?.pincode || (requirement.pincodeId && requirement.pincodeId.length === 6 && !requirement.pincodeId.includes('-') ? requirement.pincodeId : null);
 
       return res.status(200).json({
         success: true,
         data: {
           ...requirement,
+          pincodeId: cleanPincode,
+          pincode: cleanPincode,
           isBoosted: isBoostActive,
           boostPriority: isBoostActive ? requirement.boostPriority : 0,
           minimumBudget: requirement.budgetMin,
@@ -442,7 +457,7 @@ export class RequirementsController {
         return res.status(404).json({ success: false, error: { message: 'Requirement not found' } });
       }
 
-      if (requirement.customer.userId !== userId && !req.user?.roles.includes('ADMIN')) {
+      if (requirement.customer.userId !== userId && !req.user?.roles?.includes('ADMIN')) {
         return res.status(403).json({ success: false, error: { message: 'Forbidden' } });
       }
 
@@ -469,6 +484,69 @@ export class RequirementsController {
       return res.status(500).json({
         success: false,
         error: { message: error.message || 'Failed to update requirement status' },
+      });
+    }
+  }
+
+  /**
+   * DELETE /api/v1/requirements/:id
+   * Allows customer owner or admin to delete/remove a posted requirement
+   */
+  static async deleteRequirement(req: Request, res: Response) {
+    try {
+      const { id } = req.params;
+      const userId = req.user?.id;
+
+      if (!userId) {
+        return res.status(401).json({ success: false, error: { message: 'Unauthorized' } });
+      }
+
+      const requirement = await prisma.requirement.findUnique({
+        where: { id },
+        include: { customer: true, jobs: true },
+      });
+
+      if (!requirement) {
+        return res.status(404).json({ success: false, error: { message: 'Requirement not found' } });
+      }
+
+      const isAdmin = req.user?.roles?.some((r: any) => {
+        const name = typeof r === 'string' ? r : r.name || r.role?.name;
+        return name === 'ADMIN' || name === 'SUPER_ADMIN';
+      });
+
+      if (requirement.customer.userId !== userId && !isAdmin) {
+        return res.status(403).json({ success: false, error: { message: 'Unauthorized to delete this requirement' } });
+      }
+
+      const hasActiveJobs = requirement.jobs?.some((j: any) => j.status !== 'CANCELLED' && j.status !== 'COMPLETED');
+      if (hasActiveJobs) {
+        return res.status(400).json({
+          success: false,
+          error: { message: 'Cannot delete requirement with active hired jobs. Please cancel the job first.' },
+        });
+      }
+
+      // Refund candidates who spent credits
+      await CreditService.refundAllApplicationsForRequirement(id, 'REQUIREMENT_DELETED').catch(() => {});
+
+      // Delete the requirement
+      await prisma.requirement.delete({ where: { id } });
+
+      // Decrement customer jobsPostedCount
+      await prisma.customerProfile.update({
+        where: { id: requirement.customerId },
+        data: { jobsPostedCount: { decrement: 1 } },
+      }).catch(() => {});
+
+      return res.status(200).json({
+        success: true,
+        message: 'Requirement removed successfully.',
+      });
+    } catch (error: any) {
+      return res.status(500).json({
+        success: false,
+        error: { message: error.message || 'Failed to remove requirement' },
       });
     }
   }
