@@ -6,6 +6,11 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.config = void 0;
 const dotenv_1 = __importDefault(require("dotenv"));
 dotenv_1.default.config();
+const rawExpiry = parseInt(process.env.MSG91_OTP_EXPIRY || '5', 10);
+const otpExpiryMinutes = rawExpiry <= 30 ? Math.max(1, rawExpiry) : Math.max(1, Math.round(rawExpiry / 60));
+const otpExpirySeconds = rawExpiry <= 30 ? rawExpiry * 60 : rawExpiry;
+const msg91AuthKey = process.env.MSG91_AUTH_KEY || '567588TYvUCtrkERZ6a9a9c96P1';
+const smsProvider = process.env.SMS_PROVIDER || (msg91AuthKey ? 'MSG91' : 'MOCK');
 exports.config = {
     port: parseInt(process.env.PORT || '5000', 10),
     nodeEnv: process.env.NODE_ENV || 'development',
@@ -17,7 +22,7 @@ exports.config = {
         refreshExpiresIn: process.env.JWT_REFRESH_EXPIRES_IN || '90d',
     },
     otp: {
-        expirySeconds: parseInt(process.env.MSG91_OTP_EXPIRY || '300', 10), // 5 minutes default
+        expirySeconds: otpExpirySeconds, // Strictly 300 seconds (5 minutes)
         maxAttempts: parseInt(process.env.OTP_MAX_ATTEMPTS || '5', 10),
         resendCooldownSeconds: parseInt(process.env.OTP_RESEND_COOLDOWN || '30', 10),
         rateLimitMaxRequests: parseInt(process.env.OTP_MAX_REQUESTS || '5', 10),
@@ -31,7 +36,7 @@ exports.config = {
         platformFeePercentage: parseFloat(process.env.PLATFORM_FEE_PERCENTAGE || '6.0'),
     },
     providers: {
-        sms: process.env.SMS_PROVIDER || (process.env.MSG91_AUTH_KEY ? 'MSG91' : 'MOCK'),
+        sms: smsProvider,
         payment: process.env.PAYMENT_PROVIDER || 'RAZORPAY',
         calling: process.env.CALL_PROVIDER || 'MOCK',
         verification: process.env.VERIFICATION_PROVIDER || 'DIGILOCKER_MOCK',
@@ -45,10 +50,10 @@ exports.config = {
         environment: process.env.RAZORPAY_ENVIRONMENT || 'test',
     },
     msg91: {
-        authKey: process.env.MSG91_AUTH_KEY || '567588TYvUCtrkERZ6a9a9c96P1',
+        authKey: msg91AuthKey,
         templateId: process.env.MSG91_TEMPLATE_ID || '',
         senderId: process.env.MSG91_SENDER_ID || 'VAZIRO',
-        otpExpiryMinutes: Math.max(1, Math.round(parseInt(process.env.MSG91_OTP_EXPIRY || '300', 10) / 60)),
+        otpExpiryMinutes,
         otpLength: parseInt(process.env.MSG91_OTP_LENGTH || '6', 10),
         widgetId: process.env.MSG91_WIDGET_ID || '366964695657393438383035',
         tokenAuth: process.env.MSG91_TOKEN_AUTH || '567588TYvUCtrkERZ6a9a9c96P1',

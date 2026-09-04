@@ -19,4 +19,5 @@ router.post('/register', auth_controller_1.AuthController.register);
 router.get('/me', auth_middleware_1.authenticate, auth_controller_1.AuthController.getMe);
 router.put('/profile', auth_middleware_1.authenticate, auth_controller_1.AuthController.updateProfile);
 router.put('/password', auth_middleware_1.authenticate, auth_controller_1.AuthController.changePassword);
+router.post('/logout', auth_controller_1.AuthController.logout);
 exports.default = router;

@@ -9,17 +9,35 @@ export interface Msg91ApiResponse {
 
 export class Msg91Service {
   /**
-   * Normalize phone number to 91XXXXXXXXXX format required by MSG91 API
+   * Canonical Indian mobile number normalizer.
+   * Accepts: +919876543210, 919876543210, 09876543210, 9876543210
+   */
+  static normalizeIndianMobile(raw: string): { canonical: string; forMsg91: string; digits10: string; isValid: boolean } {
+    const digits = (raw || '').replace(/\D/g, '');
+    const digits10 = digits.slice(-10);
+    const isValid = digits10.length === 10 && /^[6-9]/.test(digits10);
+    return {
+      canonical: `+91${digits10}`,
+      forMsg91: `91${digits10}`,
+      digits10,
+      isValid,
+    };
+  }
+
+  /**
+   * Format mobile strictly as 91XXXXXXXXXX for MSG91 REST APIs
    */
   static formatMobileForMsg91(mobile: string): string {
-    const digits = mobile.replace(/\D/g, '');
-    if (digits.length === 10) {
-      return `91${digits}`;
-    }
-    if (digits.length === 12 && digits.startsWith('91')) {
-      return digits;
-    }
-    return digits;
+    return this.normalizeIndianMobile(mobile).forMsg91;
+  }
+
+  /**
+   * Mask phone number for safe diagnostic logging (e.g. +91 93XXXXXX86)
+   */
+  static maskMobile(mobile: string): string {
+    const { digits10, isValid } = this.normalizeIndianMobile(mobile);
+    if (!isValid) return 'XXXX';
+    return `+91 ${digits10.slice(0, 2)}XXXXXX${digits10.slice(-2)}`;
   }
 
   /**
@@ -27,11 +45,21 @@ export class Msg91Service {
    * Endpoint: POST https://control.msg91.com/api/v5/otp
    */
   static async sendOtp(mobile: string, otpCode?: string): Promise<Msg91ApiResponse> {
-    const formattedMobile = this.formatMobileForMsg91(mobile);
+    const norm = this.normalizeIndianMobile(mobile);
+    if (!norm.isValid) {
+      return {
+        success: false,
+        message: 'Please enter a valid 10-digit Indian mobile number starting with 6, 7, 8, or 9.',
+        error: 'INVALID_MOBILE',
+      };
+    }
+
+    const formattedMobile = norm.forMsg91;
     const authkey = config.msg91.authKey;
 
     // Check if real MSG91 API call should be made
     if (!authkey || config.providers.sms === 'MOCK') {
+      console.log(`[MSG91] Mock/Sandbox OTP dispatch to ${this.maskMobile(mobile)}`);
       return {
         success: true,
         message: 'OTP dispatched successfully (sandbox mode).',
@@ -39,14 +67,22 @@ export class Msg91Service {
     }
 
     try {
+      console.log(
+        `[MSG91] OTP request started | Mobile: ${this.maskMobile(mobile)} | TemplateConfigured: ${Boolean(
+          config.msg91.templateId
+        )} | SenderConfigured: ${Boolean(config.msg91.senderId)}`
+      );
+
       const url = new URL('https://control.msg91.com/api/v5/otp');
-      url.searchParams.append('template_id', config.msg91.templateId || '');
+      if (config.msg91.templateId && config.msg91.templateId.trim()) {
+        url.searchParams.append('template_id', config.msg91.templateId.trim());
+      }
       url.searchParams.append('mobile', formattedMobile);
       url.searchParams.append('authkey', authkey);
       url.searchParams.append('otp_expiry', String(config.msg91.otpExpiryMinutes));
       url.searchParams.append('otp_length', String(config.msg91.otpLength));
-      if (config.msg91.senderId) {
-        url.searchParams.append('sender', config.msg91.senderId);
+      if (config.msg91.senderId && config.msg91.senderId.trim()) {
+        url.searchParams.append('sender', config.msg91.senderId.trim());
       }
       if (otpCode) {
         url.searchParams.append('otp', otpCode);
@@ -56,14 +92,15 @@ export class Msg91Service {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Accept': 'application/json',
-          'authkey': authkey,
+          Accept: 'application/json',
+          authkey: authkey,
         },
       });
 
       const json: any = await response.json().catch(() => null);
 
-      if (json && (json.type === 'success' || json.status === 'success')) {
+      if (json && (json.type === 'success' || json.status === 'success' || json.request_id)) {
+        console.log(`[MSG91] SendOTP success | RequestId: ${json.request_id || 'OK'}`);
         return {
           success: true,
           message: json.message || 'OTP dispatched successfully.',
@@ -72,7 +109,7 @@ export class Msg91Service {
       }
 
       const errorMsg = json?.message || json?.description || 'Failed to dispatch OTP via SMS provider.';
-      console.warn('[MSG91] SendOTP provider response:', errorMsg);
+      console.warn(`[MSG91] SendOTP provider error response | Code: ${json?.code} | Message: ${errorMsg}`);
 
       return {
         success: false,
@@ -94,7 +131,15 @@ export class Msg91Service {
    * Endpoint: POST https://control.msg91.com/api/v5/otp/retry
    */
   static async retryOtp(mobile: string, retryType: 'text' | 'voice' = 'text'): Promise<Msg91ApiResponse> {
-    const formattedMobile = this.formatMobileForMsg91(mobile);
+    const norm = this.normalizeIndianMobile(mobile);
+    if (!norm.isValid) {
+      return {
+        success: false,
+        message: 'Please enter a valid 10-digit Indian mobile number.',
+      };
+    }
+
+    const formattedMobile = norm.forMsg91;
     const authkey = config.msg91.authKey;
 
     if (!authkey || config.providers.sms === 'MOCK') {
@@ -105,6 +150,7 @@ export class Msg91Service {
     }
 
     try {
+      console.log(`[MSG91] RetryOTP started | Mobile: ${this.maskMobile(mobile)} | Type: ${retryType}`);
       const url = new URL('https://control.msg91.com/api/v5/otp/retry');
       url.searchParams.append('authkey', authkey);
       url.searchParams.append('mobile', formattedMobile);
@@ -114,13 +160,14 @@ export class Msg91Service {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Accept': 'application/json',
+          Accept: 'application/json',
         },
       });
 
       const json: any = await response.json().catch(() => null);
 
       if (json && (json.type === 'success' || json.status === 'success')) {
+        console.log(`[MSG91] RetryOTP success | Mobile: ${this.maskMobile(mobile)}`);
         return {
           success: true,
           message: json.message || 'OTP resent successfully.',
@@ -147,7 +194,8 @@ export class Msg91Service {
    * Endpoint: POST https://control.msg91.com/api/v5/otp/verify
    */
   static async verifyOtp(mobile: string, otp: string): Promise<Msg91ApiResponse> {
-    const formattedMobile = this.formatMobileForMsg91(mobile);
+    const norm = this.normalizeIndianMobile(mobile);
+    const formattedMobile = norm.forMsg91;
     const authkey = config.msg91.authKey;
 
     if (!authkey || config.providers.sms === 'MOCK') {
@@ -159,6 +207,7 @@ export class Msg91Service {
     }
 
     try {
+      console.log(`[MSG91] VerifyOTP API check started | Mobile: ${this.maskMobile(mobile)}`);
       const url = new URL('https://control.msg91.com/api/v5/otp/verify');
       url.searchParams.append('authkey', authkey);
       url.searchParams.append('mobile', formattedMobile);
@@ -168,13 +217,14 @@ export class Msg91Service {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Accept': 'application/json',
+          Accept: 'application/json',
         },
       });
 
       const json: any = await response.json().catch(() => null);
 
       if (json && (json.type === 'success' || json.message?.toLowerCase().includes('success'))) {
+        console.log(`[MSG91] VerifyOTP API confirmed valid | Mobile: ${this.maskMobile(mobile)}`);
         return {
           success: true,
           message: json.message || 'OTP verified successfully.',
@@ -184,7 +234,7 @@ export class Msg91Service {
 
       return {
         success: false,
-        message: json?.message || 'Incorrect OTP. Please try again.',
+        message: json?.message || 'Incorrect OTP. Please check and try again.',
       };
     } catch (err: any) {
       console.warn('[MSG91] VerifyOTP network notice:', err.message);
@@ -212,7 +262,7 @@ export class Msg91Service {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Accept': 'application/json',
+          Accept: 'application/json',
         },
         body: JSON.stringify({
           authkey,

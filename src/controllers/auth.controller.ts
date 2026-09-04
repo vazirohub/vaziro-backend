@@ -97,30 +97,45 @@ export class AuthController {
     try {
       const parsed = checkMobileSchema.parse(req.body);
       const raw = (parsed.mobile || parsed.phone || '').trim();
-      const digits = raw.replace(/\D/g, '');
-      const formattedPhone = `+91${digits.slice(-10)}`;
-      const last10 = digits.slice(-10);
+      const { canonical, digits10, isValid } = Msg91Service.normalizeIndianMobile(raw);
+
+      if (!isValid) {
+        return res.status(400).json({
+          success: false,
+          error: {
+            code: 'INVALID_PHONE',
+            message: 'Please provide a valid 10-digit Indian mobile number.',
+          },
+        });
+      }
 
       const user = await prisma.user.findFirst({
         where: {
           OR: [
-            { phone: formattedPhone },
-            { phone: last10 },
-            { phone: `91${last10}` },
+            { phone: canonical },
+            { phone: digits10 },
+            { phone: `91${digits10}` },
           ],
         },
-        select: {
-          id: true,
-          phone: true,
-          firstName: true,
-          lastName: true,
+        include: {
+          roles: { include: { role: true } },
+          customerProfile: true,
+          professionalProfile: true,
         },
       });
+
+      const roles = user?.roles.map((r) => r.role.name) || [];
+      const primaryRole = roles.includes('PROFESSIONAL')
+        ? 'PROFESSIONAL'
+        : roles.includes('ADMIN') || roles.includes('SUPER_ADMIN')
+        ? 'ADMIN'
+        : 'CUSTOMER';
 
       return res.status(200).json({
         success: true,
         exists: Boolean(user),
-        mobile: formattedPhone,
+        mobile: canonical,
+        role: user ? primaryRole : undefined,
         message: user ? 'Account found.' : 'No account found with this mobile number.',
       });
     } catch (error) {
@@ -136,18 +151,27 @@ export class AuthController {
     try {
       const parsed = sendOtpSchema.parse(req.body);
       const raw = (parsed.mobile || parsed.phone || '').trim();
-      const digits = raw.replace(/\D/g, '');
-      const formattedPhone = `+91${digits.slice(-10)}`;
+      const { canonical, isValid } = Msg91Service.normalizeIndianMobile(raw);
 
-      const result = await OtpService.requestOtp(formattedPhone, parsed.purpose);
+      if (!isValid) {
+        return res.status(400).json({
+          success: false,
+          error: {
+            code: 'INVALID_PHONE',
+            message: 'Please provide a valid 10-digit Indian mobile number.',
+          },
+        });
+      }
+
+      const result = await OtpService.requestOtp(canonical, parsed.purpose);
 
       if (!result.success) {
         return res.status(429).json({
           success: false,
           message: result.message,
           data: {
-            mobile: formattedPhone,
-            phone: formattedPhone,
+            mobile: canonical,
+            phone: canonical,
             cooldownSeconds: result.cooldownSeconds,
           },
         });
@@ -157,12 +181,21 @@ export class AuthController {
         success: true,
         message: result.message,
         data: {
-          mobile: formattedPhone,
-          phone: formattedPhone,
+          mobile: canonical,
+          phone: canonical,
           cooldownSeconds: result.cooldownSeconds,
         },
       });
-    } catch (error) {
+    } catch (error: any) {
+      if (error.message?.includes('Too many OTP requests')) {
+        return res.status(429).json({
+          success: false,
+          error: {
+            code: 'RATE_LIMITED',
+            message: error.message,
+          },
+        });
+      }
       next(error);
     }
   }
@@ -182,18 +215,27 @@ export class AuthController {
     try {
       const parsed = resendOtpSchema.parse(req.body);
       const raw = (parsed.mobile || parsed.phone || '').trim();
-      const digits = raw.replace(/\D/g, '');
-      const formattedPhone = `+91${digits.slice(-10)}`;
+      const { canonical, isValid } = Msg91Service.normalizeIndianMobile(raw);
 
-      const result = await OtpService.resendOtp(formattedPhone, parsed.purpose);
+      if (!isValid) {
+        return res.status(400).json({
+          success: false,
+          error: {
+            code: 'INVALID_PHONE',
+            message: 'Please provide a valid 10-digit Indian mobile number.',
+          },
+        });
+      }
+
+      const result = await OtpService.resendOtp(canonical, parsed.purpose);
 
       if (!result.success) {
         return res.status(429).json({
           success: false,
           message: result.message,
           data: {
-            mobile: formattedPhone,
-            phone: formattedPhone,
+            mobile: canonical,
+            phone: canonical,
             cooldownSeconds: result.cooldownSeconds,
           },
         });
@@ -203,12 +245,21 @@ export class AuthController {
         success: true,
         message: result.message,
         data: {
-          mobile: formattedPhone,
-          phone: formattedPhone,
+          mobile: canonical,
+          phone: canonical,
           cooldownSeconds: result.cooldownSeconds,
         },
       });
-    } catch (error) {
+    } catch (error: any) {
+      if (error.message?.includes('Too many OTP requests')) {
+        return res.status(429).json({
+          success: false,
+          error: {
+            code: 'RATE_LIMITED',
+            message: error.message,
+          },
+        });
+      }
       next(error);
     }
   }
@@ -223,9 +274,17 @@ export class AuthController {
         verifyOtpSchema.parse(req.body);
 
       const raw = (mobile || phone || '').trim();
-      const digits = raw.replace(/\D/g, '');
-      const formattedPhone = `+91${digits.slice(-10)}`;
-      const last10 = digits.slice(-10);
+      const { canonical, digits10, isValid } = Msg91Service.normalizeIndianMobile(raw);
+
+      if (!isValid) {
+        return res.status(400).json({
+          success: false,
+          error: {
+            code: 'INVALID_PHONE',
+            message: 'Valid 10-digit Indian mobile number is required.',
+          },
+        });
+      }
 
       // 1. If msg91Token is provided, verify against MSG91 verifyAccessToken API
       if (msg91Token) {
@@ -250,16 +309,16 @@ export class AuthController {
             },
           });
         }
-        await OtpService.verifyOtp(formattedPhone, otp, purpose || 'login');
+        await OtpService.verifyOtp(canonical, otp, purpose || 'login');
       }
 
       // Check if user exists in database
       let user = await prisma.user.findFirst({
         where: {
           OR: [
-            { phone: formattedPhone },
-            { phone: last10 },
-            { phone: `91${last10}` },
+            { phone: canonical },
+            { phone: digits10 },
+            { phone: `91${digits10}` },
           ],
         },
         include: {
@@ -324,7 +383,7 @@ export class AuthController {
 
         user = await prisma.user.create({
           data: {
-            phone: formattedPhone,
+            phone: canonical,
             phoneCountryCode: '+91',
             firstName: firstName || (selectedRole === 'CUSTOMER' ? 'Customer' : 'Professional'),
             lastName: lastName || 'User',
@@ -403,7 +462,7 @@ export class AuthController {
 
       // New User standard flow -> Issue short-lived verified signup token
       const signupToken = jwt.sign(
-        { phone: formattedPhone, verified: true, type: 'signup_verification' },
+        { phone: canonical, verified: true, type: 'signup_verification' },
         config.jwt.secret,
         { expiresIn: '15m' }
       );
@@ -413,8 +472,8 @@ export class AuthController {
         message: 'Mobile number verified successfully. Please complete your registration.',
         data: {
           isNewUser: true,
-          mobile: formattedPhone,
-          phone: formattedPhone,
+          mobile: canonical,
+          phone: canonical,
           signupToken,
         },
       });
@@ -1042,6 +1101,54 @@ export class AuthController {
       return res.status(200).json({
         success: true,
         message: 'Password updated successfully.',
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * Log out authenticated user & revoke refresh tokens
+   * POST /api/auth/logout
+   */
+  static async logout(req: Request, res: Response, next: NextFunction) {
+    try {
+      const authHeader = req.headers.authorization;
+      let userId = req.user?.id;
+
+      if (!userId && authHeader && authHeader.startsWith('Bearer ')) {
+        const token = authHeader.split(' ')[1];
+        try {
+          const decoded = jwt.decode(token) as { userId: string } | null;
+          if (decoded?.userId) {
+            userId = decoded.userId;
+          }
+        } catch {
+          // Ignore decode error
+        }
+      }
+
+      if (userId) {
+        await prisma.refreshToken.deleteMany({
+          where: { userId },
+        }).catch(() => {});
+
+        // Audit trail
+        await prisma.auditLog.create({
+          data: {
+            userId,
+            action: 'LOGOUT',
+            entityType: 'USER',
+            entityId: userId,
+            ipAddress: req.ip,
+            userAgent: (req.headers['user-agent'] as string) || null,
+          },
+        }).catch(() => {});
+      }
+
+      return res.status(200).json({
+        success: true,
+        message: 'Logged out successfully.',
       });
     } catch (error) {
       next(error);

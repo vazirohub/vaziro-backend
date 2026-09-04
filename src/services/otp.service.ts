@@ -23,22 +23,28 @@ export class OtpService {
     purpose: string = 'login'
   ): Promise<{ success: boolean; message: string; cooldownSeconds: number }> {
     await ensureDatabaseSchema().catch(() => {});
+
+    const { canonical, isValid } = Msg91Service.normalizeIndianMobile(phone);
+    if (!isValid) {
+      throw new Error('Please enter a valid 10-digit Indian mobile number.');
+    }
+
     // Check velocity rate limit (max 5 requests per 15 minutes)
     const fifteenMinutesAgo = new Date(Date.now() - config.otp.rateLimitWindowMinutes * 60 * 1000);
     const recentRequestsCount = await prisma.otpVerification.count({
       where: {
-        phone,
+        phone: canonical,
         createdAt: { gte: fifteenMinutesAgo },
       },
     });
 
     if (recentRequestsCount >= config.otp.rateLimitMaxRequests) {
-      throw new Error('Too many OTP requests. Please wait before trying again.');
+      throw new Error('Too many OTP requests. Please wait a few minutes before trying again.');
     }
 
     // Check resend cooldown
     const latestOtp = await prisma.otpVerification.findFirst({
-      where: { phone },
+      where: { phone: canonical },
       orderBy: { createdAt: 'desc' },
     });
 
@@ -55,19 +61,19 @@ export class OtpService {
     }
 
     const otpCode = this.generateOtpCode();
-    const otpHash = this.hashOtp(otpCode, phone);
+    const otpHash = this.hashOtp(otpCode, canonical);
     const expiresAt = new Date(Date.now() + config.otp.expirySeconds * 1000);
 
     // Invalidate previous unused OTPs for this phone
     await prisma.otpVerification.updateMany({
-      where: { phone, isUsed: false },
+      where: { phone: canonical, isUsed: false },
       data: { isUsed: true },
     });
 
     // Create new OTP record
     await prisma.otpVerification.create({
       data: {
-        phone,
+        phone: canonical,
         otpHash,
         purpose,
         expiresAt,
@@ -76,9 +82,9 @@ export class OtpService {
     });
 
     // Send OTP via MSG91 server-side API (no secrets exposed to client)
-    const msg91Res = await Msg91Service.sendOtp(phone, otpCode);
+    const msg91Res = await Msg91Service.sendOtp(canonical, otpCode);
     if (!msg91Res.success) {
-      throw new Error("We couldn't send the OTP right now. Please try again in a moment.");
+      throw new Error(msg91Res.message || "We couldn't send the OTP right now. Please try again in a moment.");
     }
 
     return {
@@ -97,9 +103,15 @@ export class OtpService {
 
   static async verifyOtp(phone: string, otpCode: string, purpose: string = 'login'): Promise<boolean> {
     await ensureDatabaseSchema().catch(() => {});
+
+    const { canonical, isValid } = Msg91Service.normalizeIndianMobile(phone);
+    if (!isValid) {
+      throw new Error('Please enter a valid 10-digit Indian mobile number.');
+    }
+
     const record = await prisma.otpVerification.findFirst({
       where: {
-        phone,
+        phone: canonical,
         isUsed: false,
         expiresAt: { gt: new Date() },
       },
@@ -119,15 +131,15 @@ export class OtpService {
     }
 
     // Verify hash
-    const inputHash = this.hashOtp(otpCode, phone);
-    let isValid = inputHash === record.otpHash;
+    const inputHash = this.hashOtp(otpCode, canonical);
+    let isValidHash = inputHash === record.otpHash;
 
     // Development / test-only bypass (strictly disabled in production)
-    if (!isValid && process.env.NODE_ENV === 'test' && otpCode === '123456') {
-      isValid = true;
+    if (!isValidHash && process.env.NODE_ENV === 'test' && otpCode === '123456') {
+      isValidHash = true;
     }
 
-    if (!isValid) {
+    if (!isValidHash) {
       const newAttempts = record.attempts + 1;
       await prisma.otpVerification.update({
         where: { id: record.id },
@@ -140,7 +152,7 @@ export class OtpService {
       if (newAttempts >= record.maxAttempts) {
         throw new Error('Too many incorrect attempts. Please request a new OTP.');
       }
-      throw new Error('Incorrect OTP. Please check the OTP and try again.');
+      throw new Error('The OTP is incorrect. Please check and try again.');
     }
 
     // Mark as successfully verified & used
@@ -153,5 +165,18 @@ export class OtpService {
     });
 
     return true;
+  }
+
+  static async cleanupExpiredOtps(): Promise<void> {
+    try {
+      const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+      await prisma.otpVerification.deleteMany({
+        where: {
+          createdAt: { lt: oneDayAgo },
+        },
+      });
+    } catch {
+      // Non-blocking cleanup
+    }
   }
 }
