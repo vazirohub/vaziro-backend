@@ -38,4 +38,30 @@ describe('Auth API & Indian Phone OTP', () => {
     expect(res.body.data.user.email).toBe('admin@vaziro.in');
     expect(res.body.data.user.roles).toContain('ADMIN');
   });
+
+  it('POST /api/v1/auth/otp/verify should authenticate when msg91Verified is true', async () => {
+    const res = await request(app)
+      .post('/api/v1/auth/otp/verify')
+      .send({
+        phone: '9999977777',
+        msg91Verified: true,
+        role: 'CUSTOMER',
+        firstName: 'TestCustomer',
+      });
+
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+    expect(res.body.data.accessToken).toBeDefined();
+    expect(res.body.data.user.phone).toBe('+919999977777');
+    expect(res.body.data.user.firstName).toBe('TestCustomer');
+  });
+
+  it('GET /api/v1/auth/user-exists should return strictly { user_found, identifier }', async () => {
+    const res = await request(app)
+      .get('/api/v1/auth/user-exists?identifier=9999977777');
+
+    expect(res.status).toBe(200);
+    expect(res.body.user_found).toBe(true);
+    expect(res.body.identifier).toBe('9999977777');
+  });
 });

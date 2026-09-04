@@ -44,4 +44,9 @@ exports.config = {
         webhookSecret: process.env.RAZORPAY_WEBHOOK_SECRET || 'Vazirohub',
         environment: process.env.RAZORPAY_ENVIRONMENT || 'test',
     },
+    msg91: {
+        authKey: process.env.MSG91_AUTH_KEY || '567588TYvUCtrkERZ6a9a9c96P1',
+        widgetId: process.env.MSG91_WIDGET_ID || '366964695657393438383035',
+        tokenAuth: process.env.MSG91_TOKEN_AUTH || '567588TYvUCtrkERZ6a9a9c96P1',
+    },
 };

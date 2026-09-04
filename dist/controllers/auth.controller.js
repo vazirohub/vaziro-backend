@@ -10,16 +10,19 @@ const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
 const prisma_1 = require("../lib/prisma");
 const config_1 = require("../config");
 const otp_service_1 = require("../services/otp.service");
+const msg91_service_1 = require("../services/msg91.service");
 const phoneRegex = /^\+91[6-9]\d{9}$/;
 const requestOtpSchema = zod_1.z.object({
-    phone: zod_1.z.string().regex(phoneRegex, 'Please provide a valid 10-digit Indian phone number with +91 country prefix.'),
+    phone: zod_1.z.string().min(10, 'Please provide a valid 10-digit Indian phone number.'),
 });
 const verifyOtpSchema = zod_1.z.object({
-    phone: zod_1.z.string().regex(phoneRegex, 'Invalid phone number format.'),
-    otp: zod_1.z.string().length(6, 'OTP must be exactly 6 digits.'),
+    phone: zod_1.z.string().min(10, 'Valid 10-digit Indian mobile number is required.'),
+    otp: zod_1.z.string().min(4).max(8).optional(),
     role: zod_1.z.enum(['CUSTOMER', 'PROFESSIONAL']).default('CUSTOMER'),
     firstName: zod_1.z.string().optional(),
     lastName: zod_1.z.string().optional(),
+    msg91Verified: zod_1.z.boolean().optional(),
+    msg91Token: zod_1.z.string().optional(),
 });
 const loginSchema = zod_1.z.object({
     identifier: zod_1.z.string().optional(),
@@ -35,15 +38,56 @@ const registerSchema = zod_1.z.object({
     role: zod_1.z.enum(['CUSTOMER', 'PROFESSIONAL']).default('CUSTOMER'),
 });
 class AuthController {
+    /**
+     * MSG91 User Existence Validation Endpoint
+     * GET /api/v1/auth/user-exists?identifier=xyz
+     * Returns: { user_found: boolean, identifier: string }
+     */
+    static async checkUserExists(req, res) {
+        try {
+            const rawId = req.query.identifier || '';
+            const cleanId = rawId.trim();
+            if (!cleanId) {
+                return res.status(200).json({
+                    user_found: false,
+                    identifier: rawId,
+                });
+            }
+            const isEmail = cleanId.includes('@');
+            const cleanDigits = cleanId.replace(/\D/g, '');
+            const formattedPhone = cleanDigits.length >= 10 ? `+91${cleanDigits.slice(-10)}` : cleanId;
+            const user = await prisma_1.prisma.user.findFirst({
+                where: isEmail
+                    ? { email: cleanId.toLowerCase() }
+                    : { phone: formattedPhone },
+            });
+            return res.status(200).json({
+                user_found: Boolean(user),
+                identifier: rawId,
+            });
+        }
+        catch {
+            // Fail open so users are not blocked on DB hiccups
+            return res.status(200).json({
+                user_found: true,
+                identifier: req.query.identifier || '',
+            });
+        }
+    }
     static async requestOtp(req, res, next) {
         try {
             const { phone } = requestOtpSchema.parse(req.body);
-            const result = await otp_service_1.OtpService.requestOtp(phone);
+            const cleanDigits = phone.replace(/\D/g, '');
+            if (cleanDigits.length < 10) {
+                throw new Error('Please provide a valid 10-digit Indian phone number.');
+            }
+            const formattedPhone = `+91${cleanDigits.slice(-10)}`;
+            const result = await otp_service_1.OtpService.requestOtp(formattedPhone);
             return res.status(200).json({
                 success: true,
                 message: result.message,
                 data: {
-                    phone,
+                    phone: formattedPhone,
                     cooldownSeconds: result.cooldownSeconds,
                 },
             });
@@ -54,12 +98,29 @@ class AuthController {
     }
     static async verifyOtp(req, res, next) {
         try {
-            const { phone, otp, role, firstName, lastName } = verifyOtpSchema.parse(req.body);
-            // Verify OTP code
-            await otp_service_1.OtpService.verifyOtp(phone, otp);
+            const { phone, otp, role, firstName, lastName, msg91Verified, msg91Token } = verifyOtpSchema.parse(req.body);
+            const cleanDigits = phone.replace(/\D/g, '');
+            if (cleanDigits.length < 10) {
+                throw new Error('Please provide a valid 10-digit Indian phone number.');
+            }
+            const formattedPhone = `+91${cleanDigits.slice(-10)}`;
+            // 1. If msg91Token is provided, verify against MSG91 verifyAccessToken API
+            if (msg91Token) {
+                const tokenRes = await msg91_service_1.Msg91Service.verifyAccessToken(msg91Token);
+                if (!tokenRes.success) {
+                    throw new Error(tokenRes.error || 'MSG91 access token verification failed.');
+                }
+            }
+            else if (!msg91Verified) {
+                // 2. If not verified via MSG91 Web SDK, verify using local OtpService
+                if (!otp) {
+                    throw new Error('Please provide the OTP code sent to your phone.');
+                }
+                await otp_service_1.OtpService.verifyOtp(formattedPhone, otp);
+            }
             // Find or create user
             let user = await prisma_1.prisma.user.findUnique({
-                where: { phone },
+                where: { phone: formattedPhone },
                 include: {
                     roles: { include: { role: true } },
                     customerProfile: true,
@@ -77,7 +138,7 @@ class AuthController {
                 }
                 user = await prisma_1.prisma.user.create({
                     data: {
-                        phone,
+                        phone: formattedPhone,
                         phoneCountryCode: '+91',
                         firstName: firstName || (role === 'CUSTOMER' ? 'Customer' : 'Professional'),
                         lastName: lastName || 'User',
