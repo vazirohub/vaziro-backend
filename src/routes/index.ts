@@ -15,11 +15,13 @@ import disputesRoutes from './disputes.routes';
 import reviewsRoutes from './reviews.routes';
 import adminRoutes from './admin.routes';
 import boostRoutes from './boost.routes';
+import notificationsRoutes from './notifications.routes';
 
 const router = Router();
 
 router.use('/health', healthRoutes);
 router.use('/auth', authRoutes);
+router.use('/notifications', notificationsRoutes);
 router.use('/categories', categoriesRoutes);
 router.use('/locations', locationsRoutes);
 router.use('/requirements', requirementsRoutes);

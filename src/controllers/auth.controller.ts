@@ -6,6 +6,7 @@ import { prisma } from '../lib/prisma';
 import { config } from '../config';
 import { OtpService } from '../services/otp.service';
 import { Msg91Service } from '../services/msg91.service';
+import { NotificationService } from '../services/notification.service';
 
 const phoneRegex = /^\+91[6-9]\d{9}$/;
 
@@ -88,6 +89,24 @@ const registerSchema = z.object({
   email: z.string({ required_error: 'Email is required.' }).email('Please provide a valid email address.').min(5, 'Email is required.'),
   password: z.string().min(6, 'Password must be at least 6 characters.'),
   role: z.enum(['CUSTOMER', 'PROFESSIONAL']).default('CUSTOMER'),
+});
+
+const forgotPasswordSchema = z.object({
+  identifier: z.string().min(3, 'Email or mobile number is required.'),
+});
+
+const verifyResetCodeSchema = z.object({
+  identifier: z.string().min(3, 'Email or mobile number is required.'),
+  code: z.string().min(4, 'Verification code must be at least 4 digits.').max(8),
+});
+
+const resetPasswordSchema = z.object({
+  identifier: z.string().min(3, 'Email or mobile number is required.'),
+  code: z.string().optional(),
+  resetToken: z.string().optional(),
+  newPassword: z.string().min(6, 'Password must be at least 6 characters long.'),
+}).refine((data) => Boolean(data.code || data.resetToken), {
+  message: 'Verification code or reset token is required.',
 });
 
 export class AuthController {
@@ -822,11 +841,26 @@ export class AuthController {
         { expiresIn: config.jwt.expiresIn as any }
       );
 
+      const refreshToken = jwt.sign(
+        { userId: user.id },
+        config.jwt.refreshSecret,
+        { expiresIn: config.jwt.refreshExpiresIn as any }
+      );
+
+      await prisma.refreshToken.create({
+        data: {
+          userId: user.id,
+          tokenHash: bcrypt.hashSync(refreshToken, 8),
+          expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+        },
+      }).catch(() => {});
+
       return res.status(200).json({
         success: true,
         message: 'Logged in successfully.',
         data: {
           accessToken,
+          refreshToken,
           user: {
             id: user.id,
             email: user.email,
@@ -856,6 +890,7 @@ export class AuthController {
         where: {
           OR: [
             { phone: formattedPhone },
+            ...(cleanDigits.length >= 10 ? [{ phone: cleanDigits.slice(-10) }, { phone: `91${cleanDigits.slice(-10)}` }] : []),
             ...(email ? [{ email: email.toLowerCase().trim() }] : []),
           ],
         },
@@ -886,6 +921,7 @@ export class AuthController {
       const user = await prisma.user.create({
         data: {
           phone: formattedPhone,
+          phoneCountryCode: '+91',
           email: email ? email.toLowerCase().trim() : null,
           firstName,
           lastName,
@@ -920,17 +956,42 @@ export class AuthController {
         },
       });
 
+      // Asynchronously send welcome email & notification
+      NotificationService.sendWelcome({
+        id: user.id,
+        email: user.email,
+        firstName: user.firstName,
+        roles: user.roles.map((r) => r.role.name),
+      }).catch((err) => {
+        console.warn('[Auth] Welcome notification warning:', err?.message);
+      });
+
       const accessToken = jwt.sign(
         { userId: user.id },
         config.jwt.secret,
         { expiresIn: config.jwt.expiresIn as any }
       );
 
+      const refreshToken = jwt.sign(
+        { userId: user.id },
+        config.jwt.refreshSecret,
+        { expiresIn: config.jwt.refreshExpiresIn as any }
+      );
+
+      await prisma.refreshToken.create({
+        data: {
+          userId: user.id,
+          tokenHash: bcrypt.hashSync(refreshToken, 8),
+          expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+        },
+      }).catch(() => {});
+
       return res.status(201).json({
         success: true,
         message: 'Account registered successfully.',
         data: {
           accessToken,
+          refreshToken,
           user: {
             id: user.id,
             email: user.email,
@@ -942,6 +1003,315 @@ export class AuthController {
             professionalProfile: user.professionalProfile,
           },
         },
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * Request password reset verification code (Email or Mobile)
+   * POST /api/v1/auth/forgot-password
+   */
+  static async forgotPassword(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { identifier } = forgotPasswordSchema.parse(req.body);
+      const raw = identifier.trim();
+      const isEmail = raw.includes('@');
+      const cleanDigits = raw.replace(/\D/g, '');
+      const formattedPhone = cleanDigits.length >= 10 ? `+91${cleanDigits.slice(-10)}` : raw;
+      const canonicalId = isEmail ? raw.toLowerCase() : formattedPhone;
+
+      const safeResponse = {
+        success: true,
+        message: 'If an account exists with this email or mobile, a 6-digit verification code has been dispatched.',
+      };
+
+      // Lookup user
+      const user = await prisma.user.findFirst({
+        where: isEmail
+          ? { email: canonicalId }
+          : {
+              OR: [
+                { phone: formattedPhone },
+                { phone: raw },
+                ...(cleanDigits.length >= 10 ? [{ phone: cleanDigits.slice(-10) }, { phone: `91${cleanDigits.slice(-10)}` }] : []),
+              ],
+            },
+      });
+
+      if (!user) {
+        return res.status(200).json(safeResponse);
+      }
+
+      // Generate random 6-digit code
+      const resetCode = Math.floor(100000 + Math.random() * 900000).toString();
+      const otpHash = await bcrypt.hash(resetCode, 8);
+      const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes
+
+      // Invalidate existing reset codes
+      await prisma.otpVerification.updateMany({
+        where: {
+          OR: [
+            { identifier: canonicalId },
+            ...(user.email ? [{ email: user.email }] : []),
+            ...(user.phone ? [{ phone: user.phone }] : []),
+          ],
+          purpose: 'forgot_password',
+          isUsed: false,
+        },
+        data: { isUsed: true },
+      }).catch(() => {});
+
+      // Record new OtpVerification
+      await prisma.otpVerification.create({
+        data: {
+          identifier: canonicalId,
+          email: user.email,
+          phone: user.phone,
+          otpHash,
+          purpose: 'forgot_password',
+          expiresAt,
+          isUsed: false,
+        },
+      });
+
+      // Dispatch Email via Resend if email exists
+      if (user.email) {
+        NotificationService.sendPasswordResetCode({
+          email: user.email,
+          phone: user.phone,
+          code: resetCode,
+          firstName: user.firstName,
+        }).catch((err) => {
+          console.warn('[Auth] Password reset email notice:', err?.message);
+        });
+      }
+
+      // Dispatch SMS via MSG91 if mobile exists
+      if (user.phone) {
+        const phoneDigits = user.phone.replace(/\D/g, '').slice(-10);
+        if (phoneDigits.length === 10) {
+          Msg91Service.sendOtp(`+91${phoneDigits}`, resetCode).catch((err) => {
+            console.warn('[Auth] Password reset SMS notice:', err?.message);
+          });
+        }
+      }
+
+      return res.status(200).json(safeResponse);
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * Verify password reset code
+   * POST /api/v1/auth/verify-reset-code
+   */
+  static async verifyResetCode(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { identifier, code } = verifyResetCodeSchema.parse(req.body);
+      const raw = identifier.trim();
+      const isEmail = raw.includes('@');
+      const cleanDigits = raw.replace(/\D/g, '');
+      const formattedPhone = cleanDigits.length >= 10 ? `+91${cleanDigits.slice(-10)}` : raw;
+      const canonicalId = isEmail ? raw.toLowerCase() : formattedPhone;
+
+      const record = await prisma.otpVerification.findFirst({
+        where: {
+          OR: [
+            { identifier: canonicalId },
+            { email: canonicalId },
+            { phone: formattedPhone },
+            ...(cleanDigits.length >= 10 ? [{ phone: cleanDigits.slice(-10) }] : []),
+          ],
+          purpose: 'forgot_password',
+          isUsed: false,
+          expiresAt: { gte: new Date() },
+        },
+        orderBy: { createdAt: 'desc' },
+      });
+
+      if (!record) {
+        return res.status(400).json({
+          success: false,
+          error: {
+            code: 'INVALID_CODE',
+            message: 'Invalid or expired verification code. Please request a new code.',
+          },
+        });
+      }
+
+      if (record.attempts >= record.maxAttempts) {
+        await prisma.otpVerification.update({
+          where: { id: record.id },
+          data: { isUsed: true },
+        });
+        return res.status(429).json({
+          success: false,
+          error: {
+            code: 'MAX_ATTEMPTS_EXCEEDED',
+            message: 'Too many incorrect attempts. Please request a new verification code.',
+          },
+        });
+      }
+
+      const isValid = await bcrypt.compare(code, record.otpHash);
+      if (!isValid) {
+        await prisma.otpVerification.update({
+          where: { id: record.id },
+          data: { attempts: record.attempts + 1 },
+        });
+        return res.status(400).json({
+          success: false,
+          error: {
+            code: 'INCORRECT_CODE',
+            message: 'The verification code is incorrect. Please check and try again.',
+          },
+        });
+      }
+
+      await prisma.otpVerification.update({
+        where: { id: record.id },
+        data: { verifiedAt: new Date() },
+      });
+
+      const resetToken = jwt.sign(
+        { identifier: canonicalId, otpId: record.id, purpose: 'password_reset' },
+        config.jwt.secret,
+        { expiresIn: '15m' }
+      );
+
+      return res.status(200).json({
+        success: true,
+        message: 'Verification code confirmed successfully.',
+        data: { resetToken },
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * Set new password after code verification
+   * POST /api/v1/auth/reset-password
+   */
+  static async resetPassword(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { identifier, code, resetToken, newPassword } = resetPasswordSchema.parse(req.body);
+      const raw = identifier.trim();
+      const isEmail = raw.includes('@');
+      const cleanDigits = raw.replace(/\D/g, '');
+      const formattedPhone = cleanDigits.length >= 10 ? `+91${cleanDigits.slice(-10)}` : raw;
+      const canonicalId = isEmail ? raw.toLowerCase() : formattedPhone;
+
+      let verifiedOtpId: string | undefined;
+
+      if (resetToken) {
+        try {
+          const decoded: any = jwt.verify(resetToken, config.jwt.secret);
+          if (decoded.purpose !== 'password_reset') {
+            throw new Error('Invalid token purpose');
+          }
+          verifiedOtpId = decoded.otpId;
+        } catch {
+          return res.status(401).json({
+            success: false,
+            error: {
+              code: 'INVALID_RESET_TOKEN',
+              message: 'Your password reset session has expired. Please verify your code again.',
+            },
+          });
+        }
+      } else if (code) {
+        const record = await prisma.otpVerification.findFirst({
+          where: {
+            OR: [
+              { identifier: canonicalId },
+              { email: canonicalId },
+              { phone: formattedPhone },
+              ...(cleanDigits.length >= 10 ? [{ phone: cleanDigits.slice(-10) }] : []),
+            ],
+            purpose: 'forgot_password',
+            isUsed: false,
+            expiresAt: { gte: new Date() },
+          },
+          orderBy: { createdAt: 'desc' },
+        });
+
+        if (!record) {
+          return res.status(400).json({
+            success: false,
+            error: {
+              code: 'INVALID_CODE',
+              message: 'Invalid or expired verification code.',
+            },
+          });
+        }
+
+        const isValid = await bcrypt.compare(code, record.otpHash);
+        if (!isValid) {
+          return res.status(400).json({
+            success: false,
+            error: {
+              code: 'INCORRECT_CODE',
+              message: 'The verification code is incorrect.',
+            },
+          });
+        }
+
+        verifiedOtpId = record.id;
+      }
+
+      // Find user
+      const user = await prisma.user.findFirst({
+        where: isEmail
+          ? { email: canonicalId }
+          : {
+              OR: [
+                { phone: formattedPhone },
+                { phone: raw },
+                ...(cleanDigits.length >= 10 ? [{ phone: cleanDigits.slice(-10) }, { phone: `91${cleanDigits.slice(-10)}` }] : []),
+              ],
+            },
+      });
+
+      if (!user) {
+        return res.status(404).json({
+          success: false,
+          error: { code: 'USER_NOT_FOUND', message: 'User account not found.' },
+        });
+      }
+
+      const newHash = await bcrypt.hash(newPassword, 10);
+
+      await prisma.user.update({
+        where: { id: user.id },
+        data: { passwordHash: newHash },
+      });
+
+      if (verifiedOtpId) {
+        await prisma.otpVerification.update({
+          where: { id: verifiedOtpId },
+          data: { isUsed: true },
+        }).catch(() => {});
+      }
+
+      // Revoke all prior refresh tokens
+      await prisma.refreshToken.deleteMany({
+        where: { userId: user.id },
+      }).catch(() => {});
+
+      // Send security alert
+      NotificationService.sendPasswordChangedNotification({
+        id: user.id,
+        email: user.email,
+        firstName: user.firstName,
+      }).catch(() => {});
+
+      return res.status(200).json({
+        success: true,
+        message: 'Password updated successfully. You can now log in with your new password.',
       });
     } catch (error) {
       next(error);

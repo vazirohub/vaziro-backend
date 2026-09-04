@@ -2,6 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.CreditService = void 0;
 const prisma_1 = require("../lib/prisma");
+const notification_service_1 = require("./notification.service");
 class CreditService {
     /**
      * Master Specification Formula (Section 10, 11, 12):
@@ -830,10 +831,16 @@ class CreditService {
                 ledgerEntry,
             };
         };
-        if (customTx) {
-            return await executeRefund(customTx);
+        const result = customTx ? await executeRefund(customTx) : await prisma_1.prisma.$transaction(executeRefund);
+        if (!result.alreadyRefunded && result.creditsRefunded > 0 && result.application?.professional?.userId) {
+            notification_service_1.NotificationService.sendCreditRefund({
+                professionalUserId: result.application.professional.userId,
+                creditsRefunded: result.creditsRefunded,
+                reason,
+                requirementTitle: result.application.requirement?.title,
+            }).catch(() => { });
         }
-        return await prisma_1.prisma.$transaction(executeRefund);
+        return result;
     }
     /**
      * Refund all non-hired applications for a requirement when another candidate is hired (Section 4, 11)

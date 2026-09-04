@@ -285,12 +285,14 @@ describe('Vaziro Master Specification: Credit Engine & Refund Architecture', () 
             professionalProfileId: testProfId,
           },
         },
-        update: { creditsSpent: 5 },
+        update: { creditsSpent: 5, isRefunded: false, refundStatus: 'NONE' },
         create: {
           requirementId: req.id,
           professionalProfileId: testProfId,
           creditsSpent: 5,
           status: 'SUBMITTED',
+          isRefunded: false,
+          refundStatus: 'NONE',
         },
       });
 

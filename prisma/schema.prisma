@@ -100,7 +100,9 @@ model RefreshToken {
 
 model OtpVerification {
   id          String    @id @default(uuid())
-  phone       String
+  phone       String?
+  email       String?
+  identifier  String?
   otpHash     String
   purpose     String    @default("login")
   attempts    Int       @default(0)
@@ -111,6 +113,8 @@ model OtpVerification {
   createdAt   DateTime  @default(now())
 
   @@index([phone])
+  @@index([email])
+  @@index([identifier])
 }
 
 // ---------------------------------------------------------

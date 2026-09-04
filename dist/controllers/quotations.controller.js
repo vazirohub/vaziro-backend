@@ -4,6 +4,7 @@ exports.QuotationsController = void 0;
 const prisma_1 = require("../lib/prisma");
 const credit_service_1 = require("../services/credit.service");
 const ai_match_service_1 = require("../services/ai-match.service");
+const notification_service_1 = require("../services/notification.service");
 class QuotationsController {
     /**
      * POST /api/v1/quotations/apply
@@ -35,6 +36,7 @@ class QuotationsController {
             }
             const requirement = await prisma_1.prisma.requirement.findUnique({
                 where: { id: requirementId },
+                include: { customer: true },
             });
             if (!requirement || !['PUBLISHED', 'RECEIVING_QUOTES'].includes(requirement.status)) {
                 return res.status(400).json({
@@ -115,6 +117,22 @@ class QuotationsController {
                     remainingBalance: deduction.balanceRemaining,
                 };
             });
+            // Asynchronously send notifications
+            if (requirement.customer?.userId) {
+                notification_service_1.NotificationService.sendQuotationReceived({
+                    customerUserId: requirement.customer.userId,
+                    requirementTitle: requirement.title,
+                    quotationAmount: Number(proposedPrice),
+                    professionalName: `${prof.user.firstName} ${prof.user.lastName}`.trim(),
+                    requirementId: requirement.id,
+                }).catch(() => { });
+            }
+            notification_service_1.NotificationService.sendApplicationSubmitted({
+                professionalUserId: prof.userId,
+                requirementTitle: requirement.title,
+                creditsSpent: result.creditsDeducted,
+                requirementId: requirement.id,
+            }).catch(() => { });
             return res.status(201).json({
                 success: true,
                 message: `Quotation submitted successfully. ${result.creditsDeducted} credits deducted.`,

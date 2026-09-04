@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import { prisma } from '../lib/prisma';
 import { CreditService } from '../services/credit.service';
 import { AIMatchService } from '../services/ai-match.service';
+import { NotificationService } from '../services/notification.service';
 
 export class QuotationsController {
   /**
@@ -51,6 +52,7 @@ export class QuotationsController {
 
       const requirement = await prisma.requirement.findUnique({
         where: { id: requirementId },
+        include: { customer: true },
       });
 
       if (!requirement || !['PUBLISHED', 'RECEIVING_QUOTES'].includes(requirement.status)) {
@@ -148,6 +150,24 @@ export class QuotationsController {
           remainingBalance: deduction.balanceRemaining,
         };
       });
+
+      // Asynchronously send notifications
+      if (requirement.customer?.userId) {
+        NotificationService.sendQuotationReceived({
+          customerUserId: requirement.customer.userId,
+          requirementTitle: requirement.title,
+          quotationAmount: Number(proposedPrice),
+          professionalName: `${prof.user.firstName} ${prof.user.lastName}`.trim(),
+          requirementId: requirement.id,
+        }).catch(() => {});
+      }
+
+      NotificationService.sendApplicationSubmitted({
+        professionalUserId: prof.userId,
+        requirementTitle: requirement.title,
+        creditsSpent: result.creditsDeducted,
+        requirementId: requirement.id,
+      }).catch(() => {});
 
       return res.status(201).json({
         success: true,

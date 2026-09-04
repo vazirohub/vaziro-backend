@@ -5,6 +5,7 @@ const prisma_1 = require("../lib/prisma");
 const config_1 = require("../config");
 const razorpay_service_1 = require("../services/razorpay.service");
 const credit_service_1 = require("../services/credit.service");
+const notification_service_1 = require("../services/notification.service");
 class PaymentsController {
     /**
      * GET /api/v1/payments/config
@@ -599,6 +600,7 @@ class PaymentsController {
                 include: {
                     customer: true,
                     professional: true,
+                    requirement: true,
                     payments: {
                         where: { status: { in: ['SECURED', 'COMPLETED'] } },
                     },
@@ -742,6 +744,13 @@ class PaymentsController {
                     },
                 };
             });
+            notification_service_1.NotificationService.sendPaymentReleased({
+                customerUserId: job.customer.userId,
+                professionalUserId: job.professional.userId,
+                requirementTitle: job.requirement?.title || 'Service Contract',
+                amount: netPayout,
+                jobId: job.id,
+            }).catch(() => { });
             return res.status(200).json({
                 success: true,
                 message: 'Payment released successfully to service professional.',

@@ -18,6 +18,9 @@ router.get('/user-exists', AuthController.checkUserExists);
 
 router.post('/login', AuthController.login);
 router.post('/register', AuthController.register);
+router.post('/forgot-password', AuthController.forgotPassword);
+router.post('/verify-reset-code', AuthController.verifyResetCode);
+router.post('/reset-password', AuthController.resetPassword);
 router.get('/me', authenticate, AuthController.getMe);
 router.put('/profile', authenticate, AuthController.updateProfile);
 router.put('/password', authenticate, AuthController.changePassword);

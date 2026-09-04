@@ -3,6 +3,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.JobsController = void 0;
 const prisma_1 = require("../lib/prisma");
 const credit_service_1 = require("../services/credit.service");
+const notification_service_1 = require("../services/notification.service");
 // Controlled status transition map
 const VALID_TRANSITIONS = {
     HIRED: ['SCHEDULED', 'CANCELLED', 'DISPUTED'],
@@ -31,6 +32,7 @@ class JobsController {
             }
             const customer = await prisma_1.prisma.customerProfile.findUnique({
                 where: { userId },
+                include: { user: true },
             });
             if (!customer) {
                 return res.status(403).json({ success: false, error: { message: 'Only registered customers can hire.' } });
@@ -131,8 +133,23 @@ class JobsController {
                 return {
                     ...newJob,
                     chatThreadId: thread.id,
+                    quotationTitle: quotation.requirement.title,
+                    quotationAmount: Number(quotation.proposedPrice),
+                    professionalUserId: quotation.professional.userId,
+                    professionalName: `${quotation.professional.user.firstName} ${quotation.professional.user.lastName}`.trim(),
+                    customerName: `${customer.user?.firstName || 'Customer'} ${customer.user?.lastName || ''}`.trim(),
                 };
             });
+            notification_service_1.NotificationService.sendHireConfirmed({
+                customerUserId: userId,
+                professionalUserId: job.professionalUserId,
+                requirementTitle: job.quotationTitle,
+                quotationAmount: job.quotationAmount,
+                professionalName: job.professionalName,
+                customerName: job.customerName,
+                jobId: job.id,
+                paymentSecured: Boolean(usePaymentProtection),
+            }).catch(() => { });
             return res.status(201).json({
                 success: true,
                 message: 'Professional hired successfully! Communication channel is now open.',
@@ -240,7 +257,11 @@ class JobsController {
             }
             const job = await prisma_1.prisma.job.findUnique({
                 where: { id },
-                include: { professional: true, customer: true },
+                include: {
+                    professional: { include: { user: true } },
+                    customer: { include: { user: true } },
+                    requirement: true,
+                },
             });
             if (!job) {
                 return res.status(404).json({ success: false, error: { message: 'Job not found.' } });
@@ -282,6 +303,21 @@ class JobsController {
                 });
                 return u;
             });
+            notification_service_1.NotificationService.sendWorkStatusUpdate({
+                customerUserId: job.customer.userId,
+                requirementTitle: job.requirement?.title || 'Service Request',
+                workStatus,
+                professionalName: `${job.professional.user.firstName} ${job.professional.user.lastName}`,
+                jobId: job.id,
+            }).catch(() => { });
+            if (workStatus === 'WORK_COMPLETED') {
+                notification_service_1.NotificationService.sendWorkCompletedConfirmation({
+                    customerUserId: job.customer.userId,
+                    requirementTitle: job.requirement?.title || 'Service Request',
+                    professionalName: `${job.professional.user.firstName} ${job.professional.user.lastName}`,
+                    jobId: job.id,
+                }).catch(() => { });
+            }
             return res.status(200).json({
                 success: true,
                 message: `Work status updated to ${workStatus}.`,
@@ -305,7 +341,7 @@ class JobsController {
             const userId = req.user?.id;
             const job = await prisma_1.prisma.job.findUnique({
                 where: { id },
-                include: { customer: true, professional: true },
+                include: { customer: true, professional: true, requirement: true },
             });
             if (!job) {
                 return res.status(404).json({ success: false, error: { message: 'Job not found.' } });
@@ -356,6 +392,13 @@ class JobsController {
                 });
                 return u;
             });
+            notification_service_1.NotificationService.send({
+                userId: job.professional.userId,
+                type: 'JOB_STATUS',
+                title: 'Work Completion Confirmed',
+                message: `Customer confirmed work completion for "${job.requirement?.title || 'Service Contract'}". Payment has been authorized and is ready for release.`,
+                actionUrl: `/jobs/${job.id}`,
+            }).catch(() => { });
             return res.status(200).json({
                 success: true,
                 message: 'Work completion confirmed successfully. Payment is now ready for release.',

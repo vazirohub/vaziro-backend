@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { prisma } from '../lib/prisma';
 import { CreditService } from '../services/credit.service';
+import { NotificationService } from '../services/notification.service';
 
 // Controlled status transition map
 const VALID_TRANSITIONS: Record<string, string[]> = {
@@ -33,6 +34,7 @@ export class JobsController {
 
       const customer = await prisma.customerProfile.findUnique({
         where: { userId },
+        include: { user: true },
       });
 
       if (!customer) {
@@ -152,8 +154,24 @@ export class JobsController {
         return {
           ...newJob,
           chatThreadId: thread.id,
+          quotationTitle: quotation.requirement.title,
+          quotationAmount: Number(quotation.proposedPrice),
+          professionalUserId: quotation.professional.userId,
+          professionalName: `${quotation.professional.user.firstName} ${quotation.professional.user.lastName}`.trim(),
+          customerName: `${customer.user?.firstName || 'Customer'} ${customer.user?.lastName || ''}`.trim(),
         };
       });
+
+      NotificationService.sendHireConfirmed({
+        customerUserId: userId!,
+        professionalUserId: job.professionalUserId,
+        requirementTitle: job.quotationTitle,
+        quotationAmount: job.quotationAmount,
+        professionalName: job.professionalName,
+        customerName: job.customerName,
+        jobId: job.id,
+        paymentSecured: Boolean(usePaymentProtection),
+      }).catch(() => {});
 
       return res.status(201).json({
         success: true,
@@ -276,7 +294,11 @@ export class JobsController {
 
       const job = await prisma.job.findUnique({
         where: { id },
-        include: { professional: true, customer: true },
+        include: {
+          professional: { include: { user: true } },
+          customer: { include: { user: true } },
+          requirement: true,
+        },
       });
 
       if (!job) {
@@ -326,6 +348,23 @@ export class JobsController {
         return u;
       });
 
+      NotificationService.sendWorkStatusUpdate({
+        customerUserId: job.customer.userId,
+        requirementTitle: job.requirement?.title || 'Service Request',
+        workStatus,
+        professionalName: `${job.professional.user.firstName} ${job.professional.user.lastName}`,
+        jobId: job.id,
+      }).catch(() => {});
+
+      if (workStatus === 'WORK_COMPLETED') {
+        NotificationService.sendWorkCompletedConfirmation({
+          customerUserId: job.customer.userId,
+          requirementTitle: job.requirement?.title || 'Service Request',
+          professionalName: `${job.professional.user.firstName} ${job.professional.user.lastName}`,
+          jobId: job.id,
+        }).catch(() => {});
+      }
+
       return res.status(200).json({
         success: true,
         message: `Work status updated to ${workStatus}.`,
@@ -350,7 +389,7 @@ export class JobsController {
 
       const job = await prisma.job.findUnique({
         where: { id },
-        include: { customer: true, professional: true },
+        include: { customer: true, professional: true, requirement: true },
       });
 
       if (!job) {
@@ -412,6 +451,14 @@ export class JobsController {
 
         return u;
       });
+
+      NotificationService.send({
+        userId: job.professional.userId,
+        type: 'JOB_STATUS',
+        title: 'Work Completion Confirmed',
+        message: `Customer confirmed work completion for "${job.requirement?.title || 'Service Contract'}". Payment has been authorized and is ready for release.`,
+        actionUrl: `/jobs/${job.id}`,
+      }).catch(() => {});
 
       return res.status(200).json({
         success: true,

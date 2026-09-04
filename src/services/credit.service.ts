@@ -1,5 +1,6 @@
 import { prisma } from '../lib/prisma';
 import { config } from '../config';
+import { NotificationService } from './notification.service';
 
 export interface BatchAllocation {
   batchId: string;
@@ -962,10 +963,18 @@ export class CreditService {
       };
     };
 
-    if (customTx) {
-      return await executeRefund(customTx);
+    const result = customTx ? await executeRefund(customTx) : await prisma.$transaction(executeRefund);
+
+    if (!result.alreadyRefunded && result.creditsRefunded > 0 && result.application?.professional?.userId) {
+      NotificationService.sendCreditRefund({
+        professionalUserId: result.application.professional.userId,
+        creditsRefunded: result.creditsRefunded,
+        reason,
+        requirementTitle: result.application.requirement?.title,
+      }).catch(() => {});
     }
-    return await prisma.$transaction(executeRefund);
+
+    return result;
   }
 
   /**

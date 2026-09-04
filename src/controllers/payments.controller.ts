@@ -3,6 +3,7 @@ import { prisma } from '../lib/prisma';
 import { config } from '../config';
 import { RazorpayService } from '../services/razorpay.service';
 import { CreditService } from '../services/credit.service';
+import { NotificationService } from '../services/notification.service';
 
 export class PaymentsController {
   /**
@@ -642,6 +643,7 @@ export class PaymentsController {
         include: {
           customer: true,
           professional: true,
+          requirement: true,
           payments: {
             where: { status: { in: ['SECURED', 'COMPLETED'] } },
           },
@@ -807,6 +809,14 @@ export class PaymentsController {
           },
         };
       });
+
+      NotificationService.sendPaymentReleased({
+        customerUserId: job.customer.userId,
+        professionalUserId: job.professional.userId,
+        requirementTitle: job.requirement?.title || 'Service Contract',
+        amount: netPayout,
+        jobId: job.id,
+      }).catch(() => {});
 
       return res.status(200).json({
         success: true,
