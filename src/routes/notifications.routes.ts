@@ -7,6 +7,7 @@ const router = Router();
 router.use(authenticate);
 
 router.get('/', NotificationsController.listNotifications);
+router.post('/test-email', NotificationsController.sendTestEmail);
 router.patch('/:id/read', NotificationsController.markAsRead);
 router.patch('/read-all', NotificationsController.markAllAsRead);
 

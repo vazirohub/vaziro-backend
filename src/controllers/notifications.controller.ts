@@ -1,5 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { prisma } from '../lib/prisma';
+import { NotificationService } from '../services/notification.service';
+import { config } from '../config';
 
 export class NotificationsController {
   /**
@@ -120,6 +122,34 @@ export class NotificationsController {
         success: true,
         message: 'All notifications marked as read',
         data: { count: result.count, unreadCount: 0 },
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * Diagnostic test email endpoint
+   * POST /api/v1/notifications/test-email
+   */
+  static async sendTestEmail(req: Request, res: Response, next: NextFunction) {
+    try {
+      const recipient = (req.body?.to as string)?.trim() || req.user?.email || 'proanta2026@gmail.com';
+      const result = await NotificationService.sendEmailViaResend({
+        to: recipient,
+        subject: 'Vaziro Transactional Email System Verification',
+        html: NotificationService.generateEmailTemplate({
+          title: 'Vaziro Email System Operational',
+          message: 'This test message confirms that the Vaziro transactional email engine via Resend is working properly with full HTML formatting and delivery reporting.',
+          userName: req.user?.firstName || 'Valued Partner',
+          actionUrl: `${config.frontendUrl}/dashboard`,
+          actionText: 'Go to Dashboard',
+        }),
+      });
+
+      return res.status(result.success ? 200 : 500).json({
+        success: result.success,
+        data: result,
       });
     } catch (error) {
       next(error);

@@ -2,6 +2,8 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.NotificationsController = void 0;
 const prisma_1 = require("../lib/prisma");
+const notification_service_1 = require("../services/notification.service");
+const config_1 = require("../config");
 class NotificationsController {
     /**
      * List notifications for authenticated user
@@ -108,6 +110,33 @@ class NotificationsController {
                 success: true,
                 message: 'All notifications marked as read',
                 data: { count: result.count, unreadCount: 0 },
+            });
+        }
+        catch (error) {
+            next(error);
+        }
+    }
+    /**
+     * Diagnostic test email endpoint
+     * POST /api/v1/notifications/test-email
+     */
+    static async sendTestEmail(req, res, next) {
+        try {
+            const recipient = req.body?.to?.trim() || req.user?.email || 'proanta2026@gmail.com';
+            const result = await notification_service_1.NotificationService.sendEmailViaResend({
+                to: recipient,
+                subject: 'Vaziro Transactional Email System Verification',
+                html: notification_service_1.NotificationService.generateEmailTemplate({
+                    title: 'Vaziro Email System Operational',
+                    message: 'This test message confirms that the Vaziro transactional email engine via Resend is working properly with full HTML formatting and delivery reporting.',
+                    userName: req.user?.firstName || 'Valued Partner',
+                    actionUrl: `${config_1.config.frontendUrl}/dashboard`,
+                    actionText: 'Go to Dashboard',
+                }),
+            });
+            return res.status(result.success ? 200 : 500).json({
+                success: result.success,
+                data: result,
             });
         }
         catch (error) {
