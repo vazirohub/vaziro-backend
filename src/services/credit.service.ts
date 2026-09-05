@@ -133,7 +133,7 @@ export class CreditService {
     const wallet = await this.getOrCreateWallet(professionalProfileId);
 
     const now = new Date();
-    const thirtyDaysFromNow = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
+    const ninetyDaysFromNow = new Date(now.getTime() + 90 * 24 * 60 * 60 * 1000);
 
     const [activeBatches, refundPendingBatches, refundedApps, latestLedger, latestPlanPurchase] = await Promise.all([
       prisma.creditBatch.findMany({
@@ -185,7 +185,7 @@ export class CreditService {
         nextExpiryDate = b.expiresAt;
       }
 
-      if (b.expiresAt <= thirtyDaysFromNow) {
+      if (b.expiresAt <= ninetyDaysFromNow) {
         expiringCredits += b.remainingPurchasedCredits + b.remainingBonusCredits;
       }
     }
@@ -205,6 +205,8 @@ export class CreditService {
       bonusCredits,
       expiringCredits,
       creditsExpiringSoon: expiringCredits,
+      expiringCredits90Days: expiringCredits,
+      expiringCredits30Days: expiringCredits,
       nextExpiryDate,
       refundableCredits,
       refundableAmountInr,
