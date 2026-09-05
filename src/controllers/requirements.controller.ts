@@ -173,6 +173,34 @@ export class RequirementsController {
         });
       }
 
+      // Check for duplicate / retry submission within last 3 minutes by same customer
+      const threeMinutesAgo = new Date(Date.now() - 3 * 60 * 1000);
+      const existingDuplicate = await prisma.requirement.findFirst({
+        where: {
+          customerId: customerProfile.id,
+          title: title.trim(),
+          description: description.trim(),
+          createdAt: { gte: threeMinutesAgo },
+        },
+        include: {
+          category: true,
+          subcategory: true,
+          city: true,
+        },
+      });
+
+      if (existingDuplicate) {
+        const creditCost = await CreditService.calculateFee(existingDuplicate.budgetMin, existingDuplicate.budgetMax);
+        return res.status(200).json({
+          success: true,
+          message: 'Requirement already published.',
+          data: {
+            ...existingDuplicate,
+            creditCost,
+          },
+        });
+      }
+
       const requirement = await prisma.requirement.create({
         data: {
           customerId: customerProfile.id,
