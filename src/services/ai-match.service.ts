@@ -1,3 +1,5 @@
+import { GeminiService } from './gemini.service';
+
 export interface MatchResult {
   score: number; // 0 - 100 percentage
   ratingGrade: 'EXCELLENT' | 'HIGH' | 'MODERATE' | 'BASIC';
@@ -70,5 +72,33 @@ export class AIMatchService {
       ratingGrade,
       reasons: reasons.slice(0, 3), // Return top 3 compelling reasons
     };
+  }
+
+  /**
+   * Calculate match score enriched by Gemini AI with deterministic heuristic fallback
+   */
+  static async calculateMatchScoreWithGemini(
+    requirement: any,
+    professional: any,
+    quotation?: any
+  ): Promise<MatchResult> {
+    const fallback = this.calculateMatchScore(requirement, professional);
+
+    try {
+      if (GeminiService.isAvailable()) {
+        const geminiResult = await GeminiService.evaluateCandidateMatch(requirement, professional, quotation);
+        if (geminiResult && geminiResult.reasons && geminiResult.reasons.length > 0) {
+          return {
+            score: geminiResult.score || fallback.score,
+            ratingGrade: (geminiResult.ratingGrade as any) || fallback.ratingGrade,
+            reasons: geminiResult.reasons.slice(0, 3),
+          };
+        }
+      }
+    } catch (err: any) {
+      console.warn('[AIMatchService] Gemini match evaluation fallback:', err.message);
+    }
+
+    return fallback;
   }
 }

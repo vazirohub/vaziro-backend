@@ -16,11 +16,13 @@ import reviewsRoutes from './reviews.routes';
 import adminRoutes from './admin.routes';
 import boostRoutes from './boost.routes';
 import notificationsRoutes from './notifications.routes';
+import aiRoutes from './ai.routes';
 
 const router = Router();
 
 router.use('/health', healthRoutes);
 router.use('/auth', authRoutes);
+router.use('/ai', aiRoutes);
 router.use('/notifications', notificationsRoutes);
 router.use('/categories', categoriesRoutes);
 router.use('/locations', locationsRoutes);

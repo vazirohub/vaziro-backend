@@ -102,3 +102,30 @@ export const requireRoles = (...allowedRoles: string[]) => {
     next();
   };
 };
+
+export const optionalAuthenticate = async (req: Request, _res: Response, next: NextFunction) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      const token = authHeader.split(' ')[1];
+      const decoded = jwt.verify(token, config.jwt.secret) as { userId: string };
+      const user = await prisma.user.findUnique({
+        where: { id: decoded.userId },
+        include: { roles: { include: { role: true } } },
+      });
+      if (user && user.status === 'ACTIVE') {
+        req.user = {
+          id: user.id,
+          phone: user.phone,
+          email: user.email,
+          firstName: user.firstName,
+          lastName: user.lastName,
+          roles: user.roles.map((ur) => ur.role.name),
+        };
+      }
+    }
+  } catch (ignored) {
+    // Non-blocking fallback for optional auth
+  }
+  next();
+};

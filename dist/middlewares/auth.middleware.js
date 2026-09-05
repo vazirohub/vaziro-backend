@@ -3,7 +3,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.requireRoles = exports.authenticate = void 0;
+exports.optionalAuthenticate = exports.requireRoles = exports.authenticate = void 0;
 const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
 const prisma_1 = require("../lib/prisma");
 const config_1 = require("../config");
@@ -84,3 +84,31 @@ const requireRoles = (...allowedRoles) => {
     };
 };
 exports.requireRoles = requireRoles;
+const optionalAuthenticate = async (req, _res, next) => {
+    try {
+        const authHeader = req.headers.authorization;
+        if (authHeader && authHeader.startsWith('Bearer ')) {
+            const token = authHeader.split(' ')[1];
+            const decoded = jsonwebtoken_1.default.verify(token, config_1.config.jwt.secret);
+            const user = await prisma_1.prisma.user.findUnique({
+                where: { id: decoded.userId },
+                include: { roles: { include: { role: true } } },
+            });
+            if (user && user.status === 'ACTIVE') {
+                req.user = {
+                    id: user.id,
+                    phone: user.phone,
+                    email: user.email,
+                    firstName: user.firstName,
+                    lastName: user.lastName,
+                    roles: user.roles.map((ur) => ur.role.name),
+                };
+            }
+        }
+    }
+    catch (ignored) {
+        // Non-blocking fallback for optional auth
+    }
+    next();
+};
+exports.optionalAuthenticate = optionalAuthenticate;

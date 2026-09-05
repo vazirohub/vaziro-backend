@@ -185,14 +185,14 @@ class QuotationsController {
                 },
                 orderBy: { createdAt: 'desc' },
             });
-            const enriched = quotations.map((q) => {
-                const matchResult = ai_match_service_1.AIMatchService.calculateMatchScore(requirement, q.professional);
+            const enriched = await Promise.all(quotations.map(async (q) => {
+                const matchResult = await ai_match_service_1.AIMatchService.calculateMatchScoreWithGemini(requirement, q.professional, q);
                 return {
                     ...q,
                     timeline: q.estimatedTimeline,
                     aiMatch: matchResult,
                 };
-            });
+            }));
             return res.status(200).json({
                 success: true,
                 data: enriched,

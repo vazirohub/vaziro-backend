@@ -225,14 +225,16 @@ export class QuotationsController {
         orderBy: { createdAt: 'desc' },
       });
 
-      const enriched = quotations.map((q) => {
-        const matchResult = AIMatchService.calculateMatchScore(requirement, q.professional);
-        return {
-          ...q,
-          timeline: q.estimatedTimeline,
-          aiMatch: matchResult,
-        };
-      });
+      const enriched = await Promise.all(
+        quotations.map(async (q) => {
+          const matchResult = await AIMatchService.calculateMatchScoreWithGemini(requirement, q.professional, q);
+          return {
+            ...q,
+            timeline: q.estimatedTimeline,
+            aiMatch: matchResult,
+          };
+        })
+      );
 
       return res.status(200).json({
         success: true,
