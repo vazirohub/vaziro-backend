@@ -1,4 +1,5 @@
 import express from 'express';
+import path from 'path';
 import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
@@ -12,8 +13,15 @@ const app = express();
 // Ensure DB schema is in sync on server initialization (non-blocking)
 ensureDatabaseSchema().catch(() => {});
 
+// Serve static public assets (logos, icons)
+app.use(express.static(path.join(__dirname, '../public')));
+app.use('/public', express.static(path.join(__dirname, '../public')));
+
 // Security Headers
-app.use(helmet());
+app.use(helmet({
+  crossOriginResourcePolicy: { policy: 'cross-origin' },
+}));
+
 
 // CORS Configuration
 app.use(

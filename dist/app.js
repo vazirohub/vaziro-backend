@@ -4,6 +4,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 const express_1 = __importDefault(require("express"));
+const path_1 = __importDefault(require("path"));
 const cors_1 = __importDefault(require("cors"));
 const helmet_1 = __importDefault(require("helmet"));
 const morgan_1 = __importDefault(require("morgan"));
@@ -14,8 +15,13 @@ const auto_migrate_1 = require("./lib/auto-migrate");
 const app = (0, express_1.default)();
 // Ensure DB schema is in sync on server initialization (non-blocking)
 (0, auto_migrate_1.ensureDatabaseSchema)().catch(() => { });
+// Serve static public assets (logos, icons)
+app.use(express_1.default.static(path_1.default.join(__dirname, '../public')));
+app.use('/public', express_1.default.static(path_1.default.join(__dirname, '../public')));
 // Security Headers
-app.use((0, helmet_1.default)());
+app.use((0, helmet_1.default)({
+    crossOriginResourcePolicy: { policy: 'cross-origin' },
+}));
 // CORS Configuration
 app.use((0, cors_1.default)({
     origin: (origin, callback) => {

@@ -94,10 +94,20 @@ export class NotificationService {
         // Email delivery via Resend
         if (recipientEmail && recipientEmail.includes('@')) {
           const subject = email?.subject || title;
+          const badgeMap: Record<string, string> = {
+            REQUIREMENT: 'SERVICE REQUIREMENT',
+            QUOTATION: 'QUOTATION RECEIVED',
+            HIRE: 'HIRE CONFIRMED',
+            JOB_STATUS: 'JOB STATUS UPDATE',
+            PAYMENT: 'PAYMENT & ESCROW',
+            DISPUTE: 'CASE NOTICE',
+            SYSTEM: 'ACCOUNT NOTIFICATION',
+          };
           const htmlContent = email?.html || NotificationService.generateEmailTemplate({
             title,
             message,
             userName: recipientName,
+            badge: badgeMap[type] || 'NOTIFICATION',
             actionUrl: actionUrl ? (actionUrl.startsWith('http') ? actionUrl : `${NotificationService.frontendBaseUrl}${actionUrl}`) : undefined,
             actionText: 'View in Vaziro',
           });
@@ -184,7 +194,7 @@ export class NotificationService {
   }
 
   /**
-   * Clean, branded HTML Email Template for Vaziro
+   * Clean, branded HTML Email Template for Vaziro with High-Res Brand Logo
    */
   static generateEmailTemplate(params: {
     title: string;
@@ -192,9 +202,24 @@ export class NotificationService {
     userName?: string;
     actionUrl?: string;
     actionText?: string;
+    badge?: string;
+    highlightCode?: string;
     subNote?: string;
   }): string {
-    const { title, message, userName = 'Vaziro Member', actionUrl, actionText = 'Go to Vaziro', subNote } = params;
+    const {
+      title,
+      message,
+      userName = 'Vaziro Member',
+      actionUrl,
+      actionText = 'View in Vaziro',
+      badge,
+      highlightCode,
+      subNote,
+    } = params;
+
+    const logoUrl = 'https://vaziro.in/logo.png';
+    const siteUrl = 'https://vaziro.in';
+    const currentYear = new Date().getFullYear();
 
     return `
 <!DOCTYPE html>
@@ -202,43 +227,90 @@ export class NotificationService {
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
   <title>${title}</title>
   <style>
-    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #f9fafb; margin: 0; padding: 0; color: #111827; }
-    .container { max-width: 580px; margin: 24px auto; background: #ffffff; border: 1px solid #e5e7eb; border-radius: 16px; overflow: hidden; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05); }
-    .header { background: #059669; padding: 28px 32px; text-align: center; }
-    .header h1 { color: #ffffff; margin: 0; font-size: 24px; font-weight: 800; letter-spacing: -0.5px; }
-    .header p { color: #d1fae5; margin: 4px 0 0 0; font-size: 13px; font-weight: 500; }
-    .body { padding: 32px; }
-    .greeting { font-size: 16px; font-weight: 700; margin-bottom: 16px; color: #111827; }
-    .content { font-size: 15px; line-height: 1.6; color: #374151; margin-bottom: 24px; }
-    .button-container { text-align: center; margin: 32px 0; }
-    .button { background-color: #059669; color: #ffffff !important; padding: 14px 28px; text-decoration: none; border-radius: 10px; font-weight: 700; font-size: 14px; display: inline-block; }
-    .button:hover { background-color: #047857; }
-    .subnote { font-size: 12px; color: #6b7280; border-top: 1px solid #f3f4f6; padding-top: 16px; margin-top: 24px; line-height: 1.5; }
-    .footer { background: #f9fafb; padding: 20px 32px; text-align: center; font-size: 12px; color: #9ca3af; border-top: 1px solid #e5e7eb; }
-    .footer a { color: #059669; text-decoration: none; }
+    body, table, td, a { -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; }
+    table, td { mso-table-lspace: 0pt; mso-table-rspace: 0pt; }
+    img { -ms-interpolation-mode: bicubic; border: 0; outline: none; text-decoration: none; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #f3f4f6; margin: 0; padding: 0; width: 100% !important; color: #111827; }
+    .email-wrapper { width: 100%; background-color: #f3f4f6; padding: 32px 16px; box-sizing: border-box; }
+    .container { max-width: 580px; margin: 0 auto; background: #ffffff; border: 1px solid #e5e7eb; border-radius: 20px; overflow: hidden; box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.05), 0 8px 10px -6px rgba(0, 0, 0, 0.01); }
+    .brand-header { background: #ffffff; padding: 28px 32px 20px; text-align: center; border-bottom: 1px solid #f3f4f6; }
+    .brand-logo { max-height: 42px; width: auto; max-width: 170px; display: inline-block; }
+    .tagline-badge { display: inline-block; margin-top: 10px; font-size: 11px; font-weight: 700; color: #047857; background-color: #ecfdf5; border: 1px solid #a7f3d0; padding: 3px 12px; border-radius: 9999px; letter-spacing: 0.3px; text-transform: uppercase; }
+    .body { padding: 36px 32px; }
+    .badge { display: inline-block; background-color: #ecfdf5; color: #065f46; font-size: 11px; font-weight: 800; padding: 4px 12px; border-radius: 6px; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 16px; border: 1px solid #a7f3d0; }
+    .greeting { font-size: 15px; font-weight: 700; color: #4b5563; margin-bottom: 12px; }
+    .title { font-size: 22px; font-weight: 800; color: #111827; letter-spacing: -0.4px; line-height: 1.3; margin: 0 0 18px 0; }
+    .content { font-size: 15px; line-height: 1.65; color: #374151; margin-bottom: 24px; }
+    .code-box { background: #f0fdf4; border: 2px dashed #059669; border-radius: 12px; padding: 20px 24px; text-align: center; margin: 24px 0; }
+    .code-box .label { font-size: 12px; font-weight: 700; color: #047857; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; }
+    .code-box .code { font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, Courier, monospace; font-size: 32px; font-weight: 900; color: #065f46; letter-spacing: 8px; margin: 0; }
+    .code-box .expiry { font-size: 11px; color: #059669; margin-top: 8px; font-weight: 600; }
+    .button-container { text-align: center; margin: 28px 0 16px; }
+    .button { background-color: #000000; color: #ffffff !important; padding: 14px 32px; text-decoration: none; border-radius: 12px; font-weight: 700; font-size: 14px; display: inline-block; box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15); letter-spacing: 0.2px; }
+    .subnote { font-size: 12px; color: #6b7280; background: #f9fafb; border: 1px solid #f3f4f6; border-radius: 10px; padding: 14px 16px; margin-top: 24px; line-height: 1.5; }
+    .footer { background: #fafafa; padding: 24px 32px; text-align: center; font-size: 12px; color: #6b7280; border-top: 1px solid #f3f4f6; line-height: 1.6; }
+    .footer a { color: #059669; text-decoration: none; font-weight: 600; }
+    .footer-divider { margin: 14px 0; border: 0; border-top: 1px solid #e5e7eb; }
+    .footer-secure { font-size: 11px; color: #9ca3af; margin-top: 8px; }
   </style>
 </head>
 <body>
-  <div class="container">
-    <div class="header">
-      <h1>VAZIRO</h1>
-      <p>India's Trusted Professional Services Marketplace</p>
-    </div>
-    <div class="body">
-      <div class="greeting">Hello ${userName},</div>
-      <div class="content">${message.replace(/\n/g, '<br />')}</div>
-      ${actionUrl ? `
-      <div class="button-container">
-        <a href="${actionUrl}" class="button" target="_blank">${actionText}</a>
+  <div class="email-wrapper">
+    <div class="container">
+      <!-- Brand Header with Official Logo -->
+      <div class="brand-header">
+        <a href="${siteUrl}" target="_blank" style="text-decoration: none;">
+          <img src="${logoUrl}" alt="Vaziro" class="brand-logo" width="160" height="42" style="border: 0; outline: none; text-decoration: none;" />
+        </a>
+        <div>
+          <span class="tagline-badge">India's Verified Marketplace</span>
+        </div>
       </div>
-      ` : ''}
-      ${subNote ? `<div class="subnote">${subNote}</div>` : ''}
-    </div>
-    <div class="footer">
-      &copy; ${new Date().getFullYear()} Proanta Technologies Private Limited. All rights reserved.<br />
-      Vaziro • <a href="https://vaziro.in">vaziro.in</a> • Need help? <a href="mailto:support@vaziro.in">support@vaziro.in</a>
+
+      <!-- Main Body -->
+      <div class="body">
+        ${badge ? `<div class="badge">${badge}</div>` : ''}
+        <div class="greeting">Hello ${userName},</div>
+        <h2 class="title">${title}</h2>
+        <div class="content">${message.replace(/\n/g, '<br />')}</div>
+
+        ${highlightCode ? `
+        <div class="code-box">
+          <div class="label">Your Verification Code</div>
+          <div class="code">${highlightCode}</div>
+          <div class="expiry">Valid for 15 minutes • Do not share this code with anyone</div>
+        </div>
+        ` : ''}
+
+        ${actionUrl ? `
+        <div class="button-container">
+          <a href="${actionUrl}" class="button" target="_blank">${actionText} &rarr;</a>
+        </div>
+        ` : ''}
+
+        ${subNote ? `<div class="subnote">${subNote}</div>` : ''}
+      </div>
+
+      <!-- Footer -->
+      <div class="footer">
+        <div>
+          <strong>Vaziro</strong> — 0% Platform Commission • 100% Escrow Protection
+        </div>
+        <div style="margin-top: 4px;">
+          <a href="${siteUrl}">vaziro.in</a> • 
+          <a href="${siteUrl}/terms">Terms</a> • 
+          <a href="${siteUrl}/privacy">Privacy</a> • 
+          <a href="mailto:support@vaziro.in">support@vaziro.in</a>
+        </div>
+        <hr class="footer-divider" />
+        <div class="footer-secure">
+          &copy; ${currentYear} Proanta Technologies Private Limited. All rights reserved.<br />
+          Security Notice: Vaziro staff will never ask for your password, PIN, or OTP.
+        </div>
+      </div>
     </div>
   </div>
 </body>
@@ -260,13 +332,23 @@ export class NotificationService {
       ? `Welcome ${user.firstName}! Your professional account is ready with 10 free starter credits. Browse open customer requirements across India, submit quotes with zero platform commission, and grow your independent practice.`
       : `Welcome ${user.firstName}! Your Vaziro account has been created. Post your service requirements, connect with verified Indian service professionals, and enjoy full payment protection.`;
 
+    const html = NotificationService.generateEmailTemplate({
+      title,
+      userName: user.firstName,
+      badge: isProfessional ? 'PROFESSIONAL ONBOARDING' : 'WELCOME TO VAZIRO',
+      message,
+      actionUrl: `${NotificationService.frontendBaseUrl}${isProfessional ? '/requirements' : '/dashboard'}`,
+      actionText: isProfessional ? 'Browse Open Leads' : 'Go to Dashboard',
+      subNote: 'Need any assistance getting started? Chat anytime with Isha, our 24/7 assistant, or email support@vaziro.in.',
+    });
+
     await NotificationService.send({
       userId: user.id,
       type: 'SYSTEM',
       title,
       message,
       actionUrl: isProfessional ? '/requirements' : '/dashboard',
-      email: user.email ? { to: user.email } : undefined,
+      email: user.email ? { to: user.email, subject: title, html } : undefined,
     });
   }
 
@@ -452,8 +534,10 @@ export class NotificationService {
       const html = NotificationService.generateEmailTemplate({
         title: 'Reset Your Vaziro Password',
         userName: name,
-        message: `We received a request to reset the password for your Vaziro account.\n\nYour 6-digit verification code is:\n\n<strong style="font-size: 28px; letter-spacing: 6px; color: #059669; display: block; text-align: center; margin: 16px 0; padding: 12px; background: #f0fdf4; border-radius: 8px; border: 1px dashed #059669;">${params.code}</strong>\n\nThis code will expire in 15 minutes. If you did not request a password reset, you can safely ignore this email.`,
-        subNote: 'For security reasons, never share this verification code with anyone. Vaziro staff will never ask for your code.',
+        badge: 'SECURITY VERIFICATION',
+        message: 'We received a request to reset the password for your Vaziro account. Please use the 6-digit verification code below to authorize your password update:',
+        highlightCode: params.code,
+        subNote: '🔒 For your security, never share this verification code with anyone. Vaziro staff will never ask for your password or OTP.',
       });
 
       await NotificationService.sendEmailViaResend({
@@ -468,13 +552,26 @@ export class NotificationService {
    * 10. Security Alert: Password Changed Confirmation
    */
   static async sendPasswordChangedNotification(user: { id: string; email?: string | null; firstName: string }): Promise<void> {
+    const title = 'Security Notice: Password Updated';
+    const message = 'Your Vaziro account password was recently changed. If you initiated this change, you can safely disregard this alert.\n\nIf you did not make this change, please contact support@vaziro.in immediately to lock and protect your account.';
+
+    const html = NotificationService.generateEmailTemplate({
+      title,
+      userName: user.firstName,
+      badge: 'SECURITY ALERT',
+      message,
+      actionUrl: `${NotificationService.frontendBaseUrl}/profile`,
+      actionText: 'Review Profile Security',
+      subNote: 'Security Tip: Always use a strong, unique password and keep your contact information up to date on Vaziro.',
+    });
+
     await NotificationService.send({
       userId: user.id,
       type: 'SYSTEM',
-      title: 'Security Notice: Password Updated',
-      message: 'Your Vaziro account password was recently changed. If you did not make this change, please contact support@vaziro.in immediately.',
+      title,
+      message,
       actionUrl: '/profile',
-      email: user.email ? { to: user.email } : undefined,
+      email: user.email ? { to: user.email, subject: title, html } : undefined,
     });
   }
 }
