@@ -21,6 +21,9 @@ function withTimeout<T>(promise: Promise<T>, ms = 2500): Promise<T> {
 export async function ensureDatabaseSchema(): Promise<void> {
   if (migrated) return;
 
+  // Short delay so Express server completes initial boot and first health ping cleanly
+  await new Promise((r) => setTimeout(r, 1500));
+
   try {
     // Only run PRAGMA checks if using SQLite
     const dbUrl = process.env.DATABASE_URL || '';

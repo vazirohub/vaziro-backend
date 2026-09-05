@@ -14,6 +14,9 @@ class HealthController {
         const normalizedUrl = (0, prisma_1.getNormalizedDatabaseUrl)().replace(/:([^:@/]+)@/, ':***@');
         let dbFileExists = null;
         let dbFileSize = null;
+        let dbFileWritable = null;
+        let dirWritable = null;
+        let sqliteVersionHeader = null;
         let resolvedDbPath = null;
         if (rawUrl.startsWith('file:') || !rawUrl) {
             const filePath = rawUrl.replace('file:', '').split('?')[0];
@@ -21,7 +24,31 @@ class HealthController {
             try {
                 dbFileExists = fs_1.default.existsSync(resolvedDbPath);
                 if (dbFileExists) {
-                    dbFileSize = fs_1.default.statSync(resolvedDbPath).size;
+                    const stat = fs_1.default.statSync(resolvedDbPath);
+                    dbFileSize = stat.size;
+                    try {
+                        fs_1.default.accessSync(resolvedDbPath, fs_1.default.constants.W_OK);
+                        dbFileWritable = true;
+                    }
+                    catch {
+                        dbFileWritable = false;
+                    }
+                    try {
+                        const fd = fs_1.default.openSync(resolvedDbPath, 'r');
+                        const buf = Buffer.alloc(20);
+                        fs_1.default.readSync(fd, buf, 0, 20, 0);
+                        fs_1.default.closeSync(fd);
+                        sqliteVersionHeader = buf[18];
+                    }
+                    catch { }
+                }
+                const dir = path_1.default.dirname(resolvedDbPath);
+                try {
+                    fs_1.default.accessSync(dir, fs_1.default.constants.W_OK);
+                    dirWritable = true;
+                }
+                catch {
+                    dirWritable = false;
                 }
             }
             catch (e) { }
@@ -42,16 +69,19 @@ class HealthController {
                 resolvedDbPath,
                 dbFileExists,
                 dbFileSize,
+                dbFileWritable,
+                dirWritable,
+                journalFormat: sqliteVersionHeader === 2 ? 'WAL' : (sqliteVersionHeader === 1 ? 'ROLLBACK_DELETE' : 'UNKNOWN'),
             },
         });
     }
     static async getHealth(req, res) {
         let timer;
         try {
-            // 3-second hard timeout for database ping to prevent infinite hanging
+            // 8-second timeout for database ping
             const queryPromise = prisma_1.prisma.$queryRaw `SELECT 1`;
             const timeoutPromise = new Promise((_, reject) => {
-                timer = setTimeout(() => reject(new Error('DATABASE_QUERY_TIMEOUT: Operation exceeded 3000ms')), 3000);
+                timer = setTimeout(() => reject(new Error('DATABASE_QUERY_TIMEOUT: Operation exceeded 8000ms')), 8000);
             });
             await Promise.race([queryPromise, timeoutPromise]);
             return res.status(200).json({

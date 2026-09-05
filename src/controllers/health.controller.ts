@@ -11,6 +11,9 @@ export class HealthController {
 
     let dbFileExists: boolean | null = null;
     let dbFileSize: number | null = null;
+    let dbFileWritable: boolean | null = null;
+    let dirWritable: boolean | null = null;
+    let sqliteVersionHeader: number | null = null;
     let resolvedDbPath: string | null = null;
 
     if (rawUrl.startsWith('file:') || !rawUrl) {
@@ -19,7 +22,30 @@ export class HealthController {
       try {
         dbFileExists = fs.existsSync(resolvedDbPath);
         if (dbFileExists) {
-          dbFileSize = fs.statSync(resolvedDbPath).size;
+          const stat = fs.statSync(resolvedDbPath);
+          dbFileSize = stat.size;
+          try {
+            fs.accessSync(resolvedDbPath, fs.constants.W_OK);
+            dbFileWritable = true;
+          } catch {
+            dbFileWritable = false;
+          }
+
+          try {
+            const fd = fs.openSync(resolvedDbPath, 'r');
+            const buf = Buffer.alloc(20);
+            fs.readSync(fd, buf, 0, 20, 0);
+            fs.closeSync(fd);
+            sqliteVersionHeader = buf[18];
+          } catch {}
+        }
+
+        const dir = path.dirname(resolvedDbPath);
+        try {
+          fs.accessSync(dir, fs.constants.W_OK);
+          dirWritable = true;
+        } catch {
+          dirWritable = false;
         }
       } catch (e) {}
     }
@@ -40,6 +66,9 @@ export class HealthController {
         resolvedDbPath,
         dbFileExists,
         dbFileSize,
+        dbFileWritable,
+        dirWritable,
+        journalFormat: sqliteVersionHeader === 2 ? 'WAL' : (sqliteVersionHeader === 1 ? 'ROLLBACK_DELETE' : 'UNKNOWN'),
       },
     });
   }
@@ -47,10 +76,10 @@ export class HealthController {
   static async getHealth(req: Request, res: Response) {
     let timer: NodeJS.Timeout | undefined;
     try {
-      // 3-second hard timeout for database ping to prevent infinite hanging
+      // 8-second timeout for database ping
       const queryPromise = prisma.$queryRaw`SELECT 1`;
       const timeoutPromise = new Promise((_, reject) => {
-        timer = setTimeout(() => reject(new Error('DATABASE_QUERY_TIMEOUT: Operation exceeded 3000ms')), 3000);
+        timer = setTimeout(() => reject(new Error('DATABASE_QUERY_TIMEOUT: Operation exceeded 8000ms')), 8000);
       });
 
       await Promise.race([queryPromise, timeoutPromise]);

@@ -27,10 +27,9 @@ function getNormalizedDatabaseUrl() {
         }
         dbUrl = `file:${foundPath}`;
     }
-    // If SQLite URL, ensure connection_limit=1 and busy_timeout=5000 to prevent locks/deadlocks
+    // If SQLite URL, ensure clean file path without invalid query parameters
     if (dbUrl.startsWith('file:')) {
-        const cleanUrl = dbUrl.split('?')[0];
-        dbUrl = `${cleanUrl}?connection_limit=1&busy_timeout=5000`;
+        dbUrl = dbUrl.split('?')[0];
     }
     return dbUrl;
 }
@@ -45,12 +44,4 @@ exports.prisma = global.prisma ||
         },
         log: process.env.NODE_ENV === 'development' ? ['query', 'error', 'warn'] : ['error'],
     });
-if (process.env.NODE_ENV !== 'production') {
-    global.prisma = exports.prisma;
-}
-// Enable WAL mode & 5s busy timeout on SQLite to prevent locking & slow queries
-if (dbUrl.startsWith('file:')) {
-    exports.prisma.$queryRawUnsafe('PRAGMA journal_mode = WAL;').catch(() => { });
-    exports.prisma.$queryRawUnsafe('PRAGMA busy_timeout = 5000;').catch(() => { });
-    exports.prisma.$queryRawUnsafe('PRAGMA synchronous = NORMAL;').catch(() => { });
-}
+global.prisma = exports.prisma;
