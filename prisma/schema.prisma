@@ -159,12 +159,27 @@ model ProfessionalProfile {
   completedJobsCount   Int          @default(0)
   responseRatePercentage Float      @default(100.0)
   avatarUrl            String?
+  slug                 String?      @unique
+  profileStrength      Float        @default(0.0)
+  trustScore           Float        @default(0.0)
+  categoryId           String?
+  subcategoryId        String?
+  availabilityStatus   String       @default("AVAILABLE") // AVAILABLE, BUSY, NOT_AVAILABLE
+  workingDays          String?      // e.g. "Monday,Tuesday,Wednesday,Thursday,Friday"
+  workingHours         String?      // e.g. "09:00 AM - 06:00 PM"
+  workingPreferences   String?      // e.g. "Full-time, Part-time, On-demand, Live-in"
+  qualifications       String?      // Detailed degrees/certifications or JSON
+  serviceDescription   String?      // Detailed services offered
+  experienceDescription String?     // Story / background of experience
+  visibility           String       @default("PUBLIC") // PUBLIC, HIDDEN
   isFeatured           Boolean      @default(false)
   isVerified           Boolean      @default(false)
   createdAt            DateTime     @default(now())
   updatedAt            DateTime     @updatedAt
 
   user                 User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  category             Category?    @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  subcategory          Subcategory? @relation(fields: [subcategoryId], references: [id], onDelete: SetNull)
   skills               ProfessionalSkill[]
   serviceAreas         ServiceArea[]
   verification         Verification?
@@ -181,6 +196,12 @@ model ProfessionalProfile {
   promotions           Promotion[]
   payouts              ProfessionalPayout[]
   shortlists           Shortlist[]
+
+  @@index([slug])
+  @@index([categoryId])
+  @@index([subcategoryId])
+  @@index([visibility])
+  @@index([trustScore])
 }
 
 model Verification {
@@ -317,6 +338,7 @@ model Category {
 
   subcategories Subcategory[]
   requirements  Requirement[]
+  professionals ProfessionalProfile[]
 }
 
 model Subcategory {
@@ -331,6 +353,7 @@ model Subcategory {
 
   category    Category      @relation(fields: [categoryId], references: [id], onDelete: Cascade)
   requirements Requirement[]
+  professionals ProfessionalProfile[]
 
   @@index([categoryId])
 }

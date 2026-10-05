@@ -2,6 +2,7 @@ import jwt from 'jsonwebtoken';
 import { v4 as uuidv4 } from 'uuid';
 import { config } from '../config';
 import { prisma } from '../lib/prisma';
+import { TrustScoreService } from './trust-score.service';
 
 export interface ApiSetuTokenResponse {
   access_token: string;
@@ -326,6 +327,9 @@ export class ApiSetuService {
         },
       });
     });
+
+    // Automatically recalculate Profile Strength and Trust Score
+    await TrustScoreService.recalculate(profile.id).catch(() => {});
 
     return {
       verificationStatus: targetStatus,

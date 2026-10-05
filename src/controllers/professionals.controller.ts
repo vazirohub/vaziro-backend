@@ -1,6 +1,82 @@
 import { Request, Response } from 'express';
 import { prisma } from '../lib/prisma';
 import { ApiSetuService } from '../services/apisetu.service';
+import { ProfileStrengthService } from '../services/profile-strength.service';
+import { TrustScoreService } from '../services/trust-score.service';
+
+/**
+ * Helper to generate URL-safe, unique, stable professional slug
+ */
+function generateSlug(firstName: string, lastName: string, id: string): string {
+  const namePart = `${firstName || ''} ${lastName || ''}`
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '') || 'professional';
+  const shortId = id.replace(/[^a-z0-9]/gi, '').slice(0, 6).toLowerCase() || 'pro';
+  return `${namePart}-${shortId}`;
+}
+
+/**
+ * Standard public serializer ensuring zero sensitive data leaks
+ */
+function serializePublicProfile(profile: any, reviews: any[] = []) {
+  const trustResult = TrustScoreService.calculate(profile);
+  const fullName = `${profile.user?.firstName || ''} ${profile.user?.lastName || ''}`.trim() || 'Vaziro Professional';
+
+  return {
+    id: profile.id,
+    slug: profile.slug,
+    name: fullName,
+    displayName: `${profile.user?.firstName || 'Partner'} ${profile.user?.lastName ? profile.user.lastName[0] + '.' : ''}`,
+    title: profile.title || 'Professional Service Partner',
+    bio: profile.bio || '',
+    avatarUrl: profile.avatarUrl || null,
+    yearsOfExperience: Number(profile.yearsOfExperience || 0),
+    hourlyRate: Number(profile.hourlyRate || 0),
+    currency: profile.currency || 'INR',
+    category: profile.category ? { id: profile.category.id, name: profile.category.name, slug: profile.category.slug } : null,
+    subcategory: profile.subcategory ? { id: profile.subcategory.id, name: profile.subcategory.name, slug: profile.subcategory.slug } : null,
+    serviceDescription: profile.serviceDescription || null,
+    experienceDescription: profile.experienceDescription || null,
+    qualifications: profile.qualifications || null,
+    workingPreferences: profile.workingPreferences || null,
+    languages: profile.languages || 'Hindi, English',
+    availabilityStatus: profile.availabilityStatus || 'AVAILABLE',
+    workingDays: profile.workingDays || 'Monday - Saturday',
+    workingHours: profile.workingHours || '09:00 AM - 06:00 PM',
+    rating: Number(profile.rating || 0.0),
+    reviewsCount: Number(profile.reviewsCount || 0),
+    completedJobsCount: Number(profile.completedJobsCount || 0),
+    responseRatePercentage: Number(profile.responseRatePercentage || 100),
+    isVerified: Boolean(profile.isVerified),
+    verificationBadge: profile.isVerified ? '✓ Verified via DigiLocker' : null,
+    memberSince: profile.user?.createdAt || profile.createdAt,
+    skills: Array.isArray(profile.skills) ? profile.skills.map((s: any) => s.skill?.name || s.name || s) : [],
+    serviceAreas: Array.isArray(profile.serviceAreas)
+      ? profile.serviceAreas.map((sa: any) => sa.area?.name || sa.pincode?.pincode || sa.name || 'Service Area')
+      : [],
+    trustSummary: {
+      ...trustResult.publicSummary,
+      trustLevel: trustResult.trustLevel,
+      trustBadgeText: trustResult.trustBadgeText,
+      trustDescription: trustResult.trustDescription,
+      isNewProfessional: trustResult.isNewProfessional,
+      tooltipText: trustResult.tooltipText,
+    },
+    reviews: reviews.map((r: any) => ({
+      id: r.id,
+      rating: r.rating,
+      comment: r.comment,
+      tags: r.tags,
+      responseComment: r.responseComment,
+      createdAt: r.createdAt,
+      customerName: r.customer?.user
+        ? `${r.customer.user.firstName} ${r.customer.user.lastName ? r.customer.user.lastName[0] + '.' : ''}`
+        : 'Verified Client',
+    })),
+  };
+}
 
 export class ProfessionalsController {
   /**
@@ -13,30 +89,53 @@ export class ProfessionalsController {
         return res.status(401).json({ success: false, error: { message: 'Unauthorized' } });
       }
 
+      const profileInclude = {
+        user: {
+          select: {
+            firstName: true,
+            lastName: true,
+            email: true,
+            phone: true,
+            createdAt: true,
+            phoneVerifiedAt: true,
+            emailVerifiedAt: true,
+          },
+        },
+        category: true,
+        subcategory: true,
+        verification: true,
+        skills: {
+          include: { skill: true },
+        },
+        serviceAreas: {
+          include: { area: true, pincode: true },
+        },
+        creditWallet: true,
+        linkedAccount: true,
+        payouts: true,
+        jobs: {
+          where: { status: { in: ['SERVICE_COMPLETED', 'CUSTOMER_APPROVED', 'PAYMENT_RELEASED', 'DISPUTED'] } },
+        },
+        reviewsReceived: {
+          orderBy: { createdAt: 'desc' as const },
+          take: 5,
+          include: { customer: { include: { user: true } } },
+        },
+      };
+
       let profile = await prisma.professionalProfile.findUnique({
         where: { userId },
-        include: {
-          user: {
-            select: {
-              firstName: true,
-              lastName: true,
-              email: true,
-              phone: true,
-              createdAt: true,
-            },
-          },
-          verification: true,
-          skills: {
-            include: { skill: true },
-          },
-          creditWallet: true,
-        },
+        include: profileInclude,
       });
 
       if (!profile) {
+        const user = await prisma.user.findUnique({ where: { id: userId } });
+        const autoSlug = generateSlug(user?.firstName || 'pro', user?.lastName || 'partner', userId);
+
         profile = await prisma.professionalProfile.create({
           data: {
             userId,
+            slug: autoSlug,
             title: 'Professional Service Partner',
             bio: 'Providing verified, high-quality professional services on Vaziro.',
             yearsOfExperience: 3,
@@ -45,31 +144,38 @@ export class ProfessionalsController {
             completedJobsCount: 0,
             responseRatePercentage: 100,
             isVerified: false,
+            availabilityStatus: 'AVAILABLE',
+            workingDays: 'Monday - Saturday',
+            workingHours: '09:00 AM - 06:00 PM',
+            languages: 'Hindi, English',
+            visibility: 'PUBLIC',
           },
-          include: {
-            user: {
-              select: {
-                firstName: true,
-                lastName: true,
-                email: true,
-                phone: true,
-                createdAt: true,
-              },
-            },
-            verification: true,
-            skills: {
-              include: { skill: true },
-            },
-            creditWallet: true,
-          },
+          include: profileInclude,
+        });
+      } else if (!profile.slug) {
+        const autoSlug = generateSlug(profile.user?.firstName || 'pro', profile.user?.lastName || '', profile.id);
+        profile = await prisma.professionalProfile.update({
+          where: { id: profile.id },
+          data: { slug: autoSlug },
+          include: profileInclude,
         });
       }
+
+      if (!profile) {
+        return res.status(404).json({ success: false, error: { message: 'Failed to initialize profile' } });
+      }
+
+      // Calculate profile strength & trust score dynamically
+      const strengthResult = ProfileStrengthService.calculate(profile);
+      const trustResult = TrustScoreService.calculate(profile);
 
       return res.status(200).json({
         success: true,
         data: {
           ...profile,
           wallet: profile.creditWallet,
+          profileStrength: strengthResult,
+          trustScore: trustResult,
         },
       });
     } catch (error: any) {
@@ -93,36 +199,158 @@ export class ProfessionalsController {
         hourlyRate,
         languages,
         avatarUrl,
+        categoryId,
+        subcategoryId,
+        availabilityStatus,
+        workingDays,
+        workingHours,
+        workingPreferences,
+        qualifications,
+        serviceDescription,
+        experienceDescription,
+        visibility,
+        skills,
+        serviceAreas,
       } = req.body;
 
       const profile = await prisma.professionalProfile.findUnique({
         where: { userId },
+        include: { user: true },
       });
 
       if (!profile) {
         return res.status(404).json({ success: false, error: { message: 'Profile not found' } });
       }
 
-      const updated = await prisma.professionalProfile.update({
+      // Ensure stable slug
+      let slug = profile.slug;
+      if (!slug) {
+        slug = generateSlug(profile.user?.firstName || 'pro', profile.user?.lastName || '', profile.id);
+      }
+
+      await prisma.$transaction(async (tx) => {
+        // Update main profile attributes
+        await tx.professionalProfile.update({
+          where: { id: profile.id },
+          data: {
+            slug,
+            title: title !== undefined ? title : profile.title,
+            bio: bio !== undefined ? bio : profile.bio,
+            yearsOfExperience: yearsOfExperience !== undefined ? Number(yearsOfExperience) : profile.yearsOfExperience,
+            hourlyRate: hourlyRate !== undefined ? Number(hourlyRate) : profile.hourlyRate,
+            languages: languages !== undefined ? languages : profile.languages,
+            avatarUrl: avatarUrl !== undefined ? avatarUrl : profile.avatarUrl,
+            categoryId: categoryId !== undefined ? categoryId : profile.categoryId,
+            subcategoryId: subcategoryId !== undefined ? subcategoryId : profile.subcategoryId,
+            availabilityStatus: availabilityStatus !== undefined ? availabilityStatus : profile.availabilityStatus,
+            workingDays: workingDays !== undefined ? workingDays : profile.workingDays,
+            workingHours: workingHours !== undefined ? workingHours : profile.workingHours,
+            workingPreferences: workingPreferences !== undefined ? workingPreferences : profile.workingPreferences,
+            qualifications: qualifications !== undefined ? qualifications : profile.qualifications,
+            serviceDescription: serviceDescription !== undefined ? serviceDescription : profile.serviceDescription,
+            experienceDescription: experienceDescription !== undefined ? experienceDescription : profile.experienceDescription,
+            visibility: visibility !== undefined ? visibility : profile.visibility,
+          },
+        });
+
+        // Sync skills if array provided
+        if (Array.isArray(skills)) {
+          await tx.professionalSkill.deleteMany({
+            where: { professionalProfileId: profile.id },
+          });
+          for (const s of skills) {
+            const sName = typeof s === 'string' ? s.trim() : (s.name || s.skill?.name || '').trim();
+            if (sName) {
+              const skillRecord = await tx.skill.upsert({
+                where: { name: sName },
+                update: {},
+                create: { name: sName },
+              });
+              await tx.professionalSkill.create({
+                data: {
+                  professionalProfileId: profile.id,
+                  skillId: skillRecord.id,
+                  yearsOfExperience: Number(yearsOfExperience || 1),
+                },
+              });
+            }
+          }
+        }
+
+        // Sync service areas if array provided
+        if (Array.isArray(serviceAreas)) {
+          await tx.serviceArea.deleteMany({
+            where: { professionalProfileId: profile.id },
+          });
+          for (const sa of serviceAreas) {
+            if (sa.areaId || sa.pincodeId) {
+              await tx.serviceArea.create({
+                data: {
+                  professionalProfileId: profile.id,
+                  areaId: sa.areaId || null,
+                  pincodeId: sa.pincodeId || null,
+                  radiusKm: Number(sa.radiusKm || 10.0),
+                },
+              });
+            }
+          }
+        }
+
+        // Audit Trail
+        await tx.auditLog.create({
+          data: {
+            userId: userId!,
+            action: 'PROFILE_UPDATED',
+            entityType: 'ProfessionalProfile',
+            entityId: profile.id,
+            metadata: JSON.stringify({
+              hasTitle: Boolean(title),
+              hasBio: Boolean(bio),
+              availabilityStatus,
+              categoryId,
+            }),
+          },
+        });
+      });
+
+      // Recalculate Profile Strength & Trust Score
+      await TrustScoreService.recalculate(profile.id);
+
+      const refreshed = await prisma.professionalProfile.findUnique({
         where: { id: profile.id },
-        data: {
-          title: title !== undefined ? title : profile.title,
-          bio: bio !== undefined ? bio : profile.bio,
-          yearsOfExperience: yearsOfExperience !== undefined ? Number(yearsOfExperience) : profile.yearsOfExperience,
-          hourlyRate: hourlyRate !== undefined ? Number(hourlyRate) : profile.hourlyRate,
-          languages: languages !== undefined ? languages : profile.languages,
-          avatarUrl: avatarUrl !== undefined ? avatarUrl : profile.avatarUrl,
-        },
         include: {
+          user: {
+            select: {
+              firstName: true,
+              lastName: true,
+              email: true,
+              phone: true,
+              createdAt: true,
+              phoneVerifiedAt: true,
+              emailVerifiedAt: true,
+            },
+          },
+          category: true,
+          subcategory: true,
           skills: { include: { skill: true } },
+          serviceAreas: { include: { area: true, pincode: true } },
           verification: true,
+          linkedAccount: true,
+          payouts: true,
         },
       });
+
+      const strengthResult = ProfileStrengthService.calculate(refreshed);
+      const trustResult = TrustScoreService.calculate(refreshed);
 
       return res.status(200).json({
         success: true,
         message: 'Profile updated successfully',
-        data: updated,
+        data: {
+          ...refreshed,
+          profileStrength: strengthResult,
+          trustScore: trustResult,
+        },
       });
     } catch (error: any) {
       return res.status(500).json({
@@ -526,31 +754,228 @@ export class ProfessionalsController {
   }
 
   /**
-   * GET /api/v1/professionals/:id
+   * GET /api/v1/professionals/profile/strength
+   */
+  static async getProfileStrength(req: Request, res: Response) {
+    try {
+      const userId = req.user?.id;
+      if (!userId) {
+        return res.status(401).json({ success: false, error: { message: 'Unauthorized' } });
+      }
+
+      const profile = await prisma.professionalProfile.findUnique({
+        where: { userId },
+        include: {
+          user: true,
+          verification: true,
+          skills: { include: { skill: true } },
+          serviceAreas: { include: { area: true, pincode: true } },
+          linkedAccount: true,
+          payouts: true,
+        },
+      });
+
+      if (!profile) {
+        return res.status(404).json({ success: false, error: { message: 'Professional profile not found' } });
+      }
+
+      const strengthResult = ProfileStrengthService.calculate(profile);
+      return res.status(200).json({
+        success: true,
+        data: strengthResult,
+      });
+    } catch (error: any) {
+      return res.status(500).json({
+        success: false,
+        error: { message: error.message || 'Failed to calculate profile strength' },
+      });
+    }
+  }
+
+  /**
+   * GET /api/v1/professionals/profile/trust-score
+   */
+  static async getTrustScore(req: Request, res: Response) {
+    try {
+      const userId = req.user?.id;
+      if (!userId) {
+        return res.status(401).json({ success: false, error: { message: 'Unauthorized' } });
+      }
+
+      const profile = await prisma.professionalProfile.findUnique({
+        where: { userId },
+        include: {
+          user: true,
+          verification: true,
+          skills: { include: { skill: true } },
+          serviceAreas: { include: { area: true, pincode: true } },
+          linkedAccount: true,
+          payouts: true,
+          jobs: {
+            where: { status: { in: ['SERVICE_COMPLETED', 'CUSTOMER_APPROVED', 'PAYMENT_RELEASED', 'DISPUTED'] } },
+          },
+          reviewsReceived: true,
+        },
+      });
+
+      if (!profile) {
+        return res.status(404).json({ success: false, error: { message: 'Professional profile not found' } });
+      }
+
+      const trustResult = TrustScoreService.calculate(profile);
+      return res.status(200).json({
+        success: true,
+        data: trustResult,
+      });
+    } catch (error: any) {
+      return res.status(500).json({
+        success: false,
+        error: { message: error.message || 'Failed to calculate trust score' },
+      });
+    }
+  }
+
+  /**
+   * GET /api/v1/professionals/profile/preview
+   * Returns exact public profile view for the authenticated professional (no leaks)
+   */
+  static async getProfilePreview(req: Request, res: Response) {
+    try {
+      const userId = req.user?.id;
+      if (!userId) {
+        return res.status(401).json({ success: false, error: { message: 'Unauthorized' } });
+      }
+
+      const profile = await prisma.professionalProfile.findUnique({
+        where: { userId },
+        include: {
+          user: true,
+          category: true,
+          subcategory: true,
+          verification: true,
+          skills: { include: { skill: true } },
+          serviceAreas: { include: { area: true, pincode: true } },
+          linkedAccount: true,
+          payouts: true,
+          jobs: {
+            where: { status: { in: ['SERVICE_COMPLETED', 'CUSTOMER_APPROVED', 'PAYMENT_RELEASED', 'DISPUTED'] } },
+          },
+          reviewsReceived: {
+            where: { moderationStatus: 'APPROVED' },
+            orderBy: { createdAt: 'desc' },
+            take: 10,
+            include: { customer: { include: { user: true } } },
+          },
+        },
+      });
+
+      if (!profile) {
+        return res.status(404).json({ success: false, error: { message: 'Professional profile not found' } });
+      }
+
+      const publicPreview = serializePublicProfile(profile, profile.reviewsReceived);
+      return res.status(200).json({
+        success: true,
+        data: publicPreview,
+      });
+    } catch (error: any) {
+      return res.status(500).json({
+        success: false,
+        error: { message: error.message || 'Failed to generate profile preview' },
+      });
+    }
+  }
+
+  /**
+   * POST /api/v1/professionals/avatar
+   */
+  static async uploadAvatar(req: Request, res: Response) {
+    try {
+      const userId = req.user?.id;
+      if (!userId) {
+        return res.status(401).json({ success: false, error: { message: 'Unauthorized' } });
+      }
+
+      const { avatarUrl } = req.body;
+      if (!avatarUrl || typeof avatarUrl !== 'string' || avatarUrl.trim().length < 5) {
+        return res.status(400).json({
+          success: false,
+          error: { message: 'Valid image URL or data URI is required for profile photo.' },
+        });
+      }
+
+      const profile = await prisma.professionalProfile.findUnique({ where: { userId } });
+      if (!profile) {
+        return res.status(404).json({ success: false, error: { message: 'Professional profile not found' } });
+      }
+
+      const updated = await prisma.professionalProfile.update({
+        where: { id: profile.id },
+        data: { avatarUrl: avatarUrl.trim() },
+      });
+
+      await TrustScoreService.recalculate(profile.id);
+
+      await prisma.auditLog.create({
+        data: {
+          userId,
+          action: 'PROFILE_PHOTO_UPDATED',
+          entityType: 'ProfessionalProfile',
+          entityId: profile.id,
+          metadata: JSON.stringify({ hasAvatar: true }),
+        },
+      });
+
+      return res.status(200).json({
+        success: true,
+        message: 'Profile photo updated successfully',
+        data: { avatarUrl: updated.avatarUrl },
+      });
+    } catch (error: any) {
+      return res.status(500).json({
+        success: false,
+        error: { message: error.message || 'Failed to update profile photo' },
+      });
+    }
+  }
+
+  /**
+   * GET /api/v1/professionals/:idOrSlug
+   * GET /api/v1/professionals/:id/public
+   * GET /api/v1/professionals/slug/:slug
    */
   static async getPublicProfile(req: Request, res: Response) {
     try {
-      const { id } = req.params;
+      const identifier = (req.params.idOrSlug || req.params.id || req.params.slug) as string | undefined;
 
-      const profile = await prisma.professionalProfile.findUnique({
-        where: { id },
+      if (!identifier) {
+        return res.status(400).json({ success: false, error: { message: 'Identifier or slug is required' } });
+      }
+
+      const profile = await prisma.professionalProfile.findFirst({
+        where: {
+          OR: [
+            { id: identifier },
+            { slug: identifier },
+          ],
+        },
         include: {
-          user: {
-            select: {
-              firstName: true,
-              lastName: true,
-              createdAt: true,
-            },
+          user: true,
+          category: true,
+          subcategory: true,
+          verification: true,
+          skills: { include: { skill: true } },
+          serviceAreas: { include: { area: true, pincode: true } },
+          linkedAccount: true,
+          payouts: true,
+          jobs: {
+            where: { status: { in: ['SERVICE_COMPLETED', 'CUSTOMER_APPROVED', 'PAYMENT_RELEASED', 'DISPUTED'] } },
           },
-          verification: {
-            select: {
-              status: true,
-              provider: true,
-              verifiedAt: true,
-            },
-          },
-          skills: {
-            include: { skill: true },
+          reviewsReceived: {
+            where: { moderationStatus: 'APPROVED' },
+            orderBy: { createdAt: 'desc' },
+            take: 10,
+            include: { customer: { include: { user: true } } },
           },
         },
       });
@@ -559,24 +984,14 @@ export class ProfessionalsController {
         return res.status(404).json({ success: false, error: { message: 'Professional not found' } });
       }
 
-      const publicData = {
-        id: profile.id,
-        name: `${profile.user.firstName} ${profile.user.lastName ? profile.user.lastName[0] + '.' : ''}`,
-        title: profile.title,
-        bio: profile.bio,
-        yearsOfExperience: profile.yearsOfExperience,
-        hourlyRate: profile.hourlyRate,
-        rating: profile.rating,
-        reviewsCount: profile.reviewsCount,
-        completedJobsCount: profile.completedJobsCount,
-        responseRatePercentage: profile.responseRatePercentage,
-        languages: profile.languages,
-        avatarUrl: profile.avatarUrl,
-        isVerified: profile.isVerified,
-        verificationBadge: profile.isVerified ? '✓ Verified via DigiLocker' : null,
-        memberSince: profile.user.createdAt,
-        skills: profile.skills.map((s) => s.skill.name),
-      };
+      if (profile.visibility === 'HIDDEN') {
+        return res.status(404).json({
+          success: false,
+          error: { message: 'This professional profile is currently set to private.' },
+        });
+      }
+
+      const publicData = serializePublicProfile(profile, profile.reviewsReceived);
 
       return res.status(200).json({
         success: true,

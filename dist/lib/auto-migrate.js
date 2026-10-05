@@ -20,8 +20,10 @@ function withTimeout(promise, ms = 2500) {
 async function ensureDatabaseSchema() {
     if (migrated)
         return;
-    // Short delay so Express server completes initial boot and first health ping cleanly
-    await new Promise((r) => setTimeout(r, 1500));
+    // Short delay in production so Express server completes initial boot cleanly
+    if (process.env.NODE_ENV !== 'test') {
+        await new Promise((r) => setTimeout(r, 1500));
+    }
     try {
         // Only run PRAGMA checks if using SQLite
         const dbUrl = process.env.DATABASE_URL || '';
@@ -76,6 +78,29 @@ async function ensureDatabaseSchema() {
         ];
         for (const [col, sql] of verifAdditions) {
             if (!verifColNames.has(col)) {
+                await withTimeout(prisma_1.prisma.$executeRawUnsafe(sql)).catch(() => { });
+            }
+        }
+        // Check existing columns for ProfessionalProfile table
+        const profCols = await withTimeout(prisma_1.prisma.$queryRawUnsafe(`PRAGMA table_info(ProfessionalProfile)`)).catch(() => []);
+        const profColNames = new Set((profCols || []).map((c) => c.name?.toLowerCase()));
+        const profAdditions = [
+            ['slug', `ALTER TABLE ProfessionalProfile ADD COLUMN slug TEXT`],
+            ['profilestrength', `ALTER TABLE ProfessionalProfile ADD COLUMN profileStrength REAL DEFAULT 0.0`],
+            ['trustscore', `ALTER TABLE ProfessionalProfile ADD COLUMN trustScore REAL DEFAULT 0.0`],
+            ['categoryid', `ALTER TABLE ProfessionalProfile ADD COLUMN categoryId TEXT`],
+            ['subcategoryid', `ALTER TABLE ProfessionalProfile ADD COLUMN subcategoryId TEXT`],
+            ['availabilitystatus', `ALTER TABLE ProfessionalProfile ADD COLUMN availabilityStatus TEXT DEFAULT 'AVAILABLE'`],
+            ['workingdays', `ALTER TABLE ProfessionalProfile ADD COLUMN workingDays TEXT`],
+            ['workinghours', `ALTER TABLE ProfessionalProfile ADD COLUMN workingHours TEXT`],
+            ['workingpreferences', `ALTER TABLE ProfessionalProfile ADD COLUMN workingPreferences TEXT`],
+            ['qualifications', `ALTER TABLE ProfessionalProfile ADD COLUMN qualifications TEXT`],
+            ['servicedescription', `ALTER TABLE ProfessionalProfile ADD COLUMN serviceDescription TEXT`],
+            ['experiencedescription', `ALTER TABLE ProfessionalProfile ADD COLUMN experienceDescription TEXT`],
+            ['visibility', `ALTER TABLE ProfessionalProfile ADD COLUMN visibility TEXT DEFAULT 'PUBLIC'`],
+        ];
+        for (const [col, sql] of profAdditions) {
+            if (!profColNames.has(col)) {
                 await withTimeout(prisma_1.prisma.$executeRawUnsafe(sql)).catch(() => { });
             }
         }

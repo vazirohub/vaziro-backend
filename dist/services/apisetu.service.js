@@ -8,6 +8,7 @@ const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
 const uuid_1 = require("uuid");
 const config_1 = require("../config");
 const prisma_1 = require("../lib/prisma");
+const trust_score_service_1 = require("./trust-score.service");
 class ApiSetuService {
     /**
      * Generates a tamper-proof state token and MeriPehchaan / API Setu OAuth2 authorization URL
@@ -248,6 +249,8 @@ class ApiSetuService {
                 },
             });
         });
+        // Automatically recalculate Profile Strength and Trust Score
+        await trust_score_service_1.TrustScoreService.recalculate(profile.id).catch(() => { });
         return {
             verificationStatus: targetStatus,
             badgeText: isMismatch ? 'Review Required' : '✓ Verified via DigiLocker',
