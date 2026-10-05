@@ -430,20 +430,56 @@ export class AdminController {
 
   /**
    * GET /api/v1/admin/verifications
+   * Supports status filtering and multi-field search
    */
   static async getVerifications(req: Request, res: Response) {
     try {
+      const { status, search } = req.query;
+
+      const whereClause: any = {};
+
+      if (status && typeof status === 'string' && status !== 'ALL') {
+        whereClause.status = status.toUpperCase();
+      }
+
+      if (search && typeof search === 'string' && search.trim()) {
+        const query = search.trim();
+        whereClause.OR = [
+          { referenceId: { contains: query } },
+          { requestId: { contains: query } },
+          { verificationReference: { contains: query } },
+          {
+            professional: {
+              OR: [
+                { id: { contains: query } },
+                {
+                  user: {
+                    OR: [
+                      { firstName: { contains: query } },
+                      { lastName: { contains: query } },
+                      { phone: { contains: query } },
+                      { email: { contains: query } },
+                    ],
+                  },
+                },
+              ],
+            },
+          },
+        ];
+      }
+
       const verifications = await prisma.verification.findMany({
+        where: whereClause,
         include: {
           professional: {
             include: {
               user: {
-                select: { firstName: true, lastName: true, phone: true, email: true },
+                select: { id: true, firstName: true, lastName: true, phone: true, email: true },
               },
             },
           },
         },
-        orderBy: { createdAt: 'desc' },
+        orderBy: { updatedAt: 'desc' },
       });
 
       return res.status(200).json({
@@ -459,12 +495,59 @@ export class AdminController {
   }
 
   /**
-   * PATCH /api/v1/admin/verifications/:id
+   * GET /api/v1/admin/verifications/:id
    */
-  static async reviewVerification(req: Request, res: Response) {
+  static async getVerificationById(req: Request, res: Response) {
     try {
       const { id } = req.params;
-      const { status, rejectionReason } = req.body;
+      const verification = await prisma.verification.findUnique({
+        where: { id },
+        include: {
+          professional: {
+            include: {
+              user: {
+                select: { id: true, firstName: true, lastName: true, phone: true, email: true, createdAt: true },
+              },
+            },
+          },
+        },
+      });
+
+      if (!verification) {
+        return res.status(404).json({ success: false, error: { message: 'Verification case not found.' } });
+      }
+
+      // Fetch audit logs for this verification case
+      const auditLogs = await prisma.auditLog.findMany({
+        where: { entityId: verification.professionalProfileId },
+        orderBy: { createdAt: 'desc' },
+        take: 10,
+      });
+
+      return res.status(200).json({
+        success: true,
+        data: {
+          ...verification,
+          auditLogs,
+        },
+      });
+    } catch (error: any) {
+      return res.status(500).json({
+        success: false,
+        error: { message: error.message || 'Failed to fetch verification details' },
+      });
+    }
+  }
+
+  /**
+   * POST /api/v1/admin/verifications/:id/review
+   * Mark a verification case for manual review
+   */
+  static async markForReview(req: Request, res: Response) {
+    try {
+      const { id } = req.params;
+      const { reviewReason } = req.body;
+      const adminId = req.user?.id;
 
       const verification = await prisma.verification.findUnique({
         where: { id },
@@ -478,15 +561,29 @@ export class AdminController {
         const v = await tx.verification.update({
           where: { id },
           data: {
-            status,
-            rejectionReason: rejectionReason || null,
-            verifiedAt: status === 'VERIFIED' ? new Date() : null,
+            status: 'REVIEW_REQUIRED',
+            reviewReason: reviewReason || 'Flagged for manual compliance review by Administrator.',
           },
         });
 
         await tx.professionalProfile.update({
           where: { id: verification.professionalProfileId },
-          data: { isVerified: status === 'VERIFIED' },
+          data: { isVerified: false },
+        });
+
+        await tx.auditLog.create({
+          data: {
+            userId: adminId,
+            action: 'ADMIN_VERIFICATION_REVIEW',
+            entityType: 'Verification',
+            entityId: verification.professionalProfileId,
+            metadata: JSON.stringify({
+              adminId,
+              previousStatus: verification.status,
+              reviewReason: reviewReason || 'Manual compliance review initiated',
+              timestamp: new Date().toISOString(),
+            }),
+          },
         });
 
         return v;
@@ -494,9 +591,123 @@ export class AdminController {
 
       return res.status(200).json({
         success: true,
-        message: `Verification marked as ${status}`,
+        message: 'Verification case marked for manual review.',
         data: updated,
       });
+    } catch (error: any) {
+      return res.status(500).json({
+        success: false,
+        error: { message: error.message || 'Failed to update review status' },
+      });
+    }
+  }
+
+  /**
+   * POST /api/v1/admin/verifications/:id/override
+   * Explicit administrative override with mandatory reason and immutable audit trail
+   */
+  static async adminOverride(req: Request, res: Response) {
+    try {
+      const { id } = req.params;
+      const { action, reason } = req.body; // action: 'APPROVE' | 'REJECT'
+      const adminId = req.user?.id;
+
+      if (!action || !['APPROVE', 'REJECT'].includes(action)) {
+        return res.status(400).json({
+          success: false,
+          error: { message: 'Action must be either APPROVE or REJECT.' },
+        });
+      }
+
+      if (!reason || typeof reason !== 'string' || reason.trim().length < 5) {
+        return res.status(400).json({
+          success: false,
+          error: { message: 'A specific explanation (reason) is strictly mandatory for administrative overrides.' },
+        });
+      }
+
+      const verification = await prisma.verification.findUnique({
+        where: { id },
+      });
+
+      if (!verification) {
+        return res.status(404).json({ success: false, error: { message: 'Verification case not found.' } });
+      }
+
+      const targetStatus = action === 'APPROVE' ? 'VERIFIED' : 'FAILED';
+      const isVerified = action === 'APPROVE';
+
+      const updated = await prisma.$transaction(async (tx) => {
+        const v = await tx.verification.update({
+          where: { id },
+          data: {
+            status: targetStatus,
+            verifiedAt: isVerified ? new Date() : null,
+            failureReason: isVerified ? null : reason.trim(),
+            reviewReason: `Admin Override (${action}): ${reason.trim()}`,
+          },
+        });
+
+        await tx.professionalProfile.update({
+          where: { id: verification.professionalProfileId },
+          data: { isVerified },
+        });
+
+        await tx.auditLog.create({
+          data: {
+            userId: adminId,
+            action: 'ADMIN_VERIFICATION_OVERRIDE',
+            entityType: 'Verification',
+            entityId: verification.professionalProfileId,
+            metadata: JSON.stringify({
+              adminId,
+              overrideAction: action,
+              reason: reason.trim(),
+              previousStatus: verification.status,
+              newStatus: targetStatus,
+              timestamp: new Date().toISOString(),
+            }),
+          },
+        });
+
+        return v;
+      });
+
+      return res.status(200).json({
+        success: true,
+        message: `Administrative override successful: Verification marked as ${targetStatus}.`,
+        data: updated,
+      });
+    } catch (error: any) {
+      return res.status(500).json({
+        success: false,
+        error: { message: error.message || 'Failed to process administrative override' },
+      });
+    }
+  }
+
+  /**
+   * PATCH /api/v1/admin/verifications/:id (Legacy wrapper)
+   */
+  static async reviewVerification(req: Request, res: Response) {
+    try {
+      const { id } = req.params;
+      const { status, rejectionReason } = req.body;
+
+      if (status === 'VERIFIED') {
+        req.body.action = 'APPROVE';
+        req.body.reason = rejectionReason || 'KYC credentials verified by administrator';
+        return AdminController.adminOverride(req, res);
+      } else if (status === 'FAILED') {
+        req.body.action = 'REJECT';
+        req.body.reason = rejectionReason || 'KYC credentials rejected by administrator';
+        return AdminController.adminOverride(req, res);
+      } else if (status === 'REVIEW_REQUIRED') {
+        req.body.reviewReason = rejectionReason;
+        return AdminController.markForReview(req, res);
+      }
+
+      return res.status(400).json({ success: false, error: { message: 'Invalid verification status' } });
     } catch (error: any) {
       return res.status(500).json({
         success: false,

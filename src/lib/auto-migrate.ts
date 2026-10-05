@@ -72,6 +72,34 @@ export async function ensureDatabaseSchema(): Promise<void> {
       }
     }
 
+    // Check existing columns for Verification table
+    const verifCols = await withTimeout(
+      prisma.$queryRawUnsafe<Array<{ name: string }>>(`PRAGMA table_info(Verification)`)
+    ).catch(() => []);
+    const verifColNames = new Set((verifCols || []).map((c: any) => c.name?.toLowerCase()));
+
+    const verifAdditions: [string, string][] = [
+      ['requestid', `ALTER TABLE Verification ADD COLUMN requestId TEXT`],
+      ['transactionid', `ALTER TABLE Verification ADD COLUMN transactionId TEXT`],
+      ['verificationreference', `ALTER TABLE Verification ADD COLUMN verificationReference TEXT`],
+      ['documenttype', `ALTER TABLE Verification ADD COLUMN documentType TEXT DEFAULT 'AADHAAR'`],
+      ['namematchstatus', `ALTER TABLE Verification ADD COLUMN nameMatchStatus TEXT`],
+      ['dobmatchstatus', `ALTER TABLE Verification ADD COLUMN dobMatchStatus TEXT`],
+      ['expiresat', `ALTER TABLE Verification ADD COLUMN expiresAt DATETIME`],
+      ['failurereason', `ALTER TABLE Verification ADD COLUMN failureReason TEXT`],
+      ['reviewreason', `ALTER TABLE Verification ADD COLUMN reviewReason TEXT`],
+      ['rejectionreason', `ALTER TABLE Verification ADD COLUMN rejectionReason TEXT`],
+      ['providerresponse', `ALTER TABLE Verification ADD COLUMN providerResponse TEXT`],
+      ['attemptcount', `ALTER TABLE Verification ADD COLUMN attemptCount INTEGER DEFAULT 0`],
+      ['lastattemptat', `ALTER TABLE Verification ADD COLUMN lastAttemptAt DATETIME`],
+    ];
+
+    for (const [col, sql] of verifAdditions) {
+      if (!verifColNames.has(col)) {
+        await withTimeout(prisma.$executeRawUnsafe(sql)).catch(() => {});
+      }
+    }
+
     // Ensure WebhookEvent table exists
     await withTimeout(
       prisma.$executeRawUnsafe(`CREATE TABLE IF NOT EXISTS WebhookEvent (

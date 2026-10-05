@@ -289,16 +289,8 @@ class AuthController {
                     },
                 });
             }
-            // Verification logic:
-            if (msg91Verified) {
-                console.log(`[Auth] MSG91 client-side OTP verified successfully for ${canonical}`);
-                // Invalidate any open server-side OTP sessions for this phone
-                await prisma_1.prisma.otpVerification.updateMany({
-                    where: { phone: canonical, isUsed: false },
-                    data: { isUsed: true },
-                }).catch(() => { });
-            }
-            else if (msg91Token) {
+            // Cryptographically enforce server-side verification:
+            if (msg91Token) {
                 // 1. If msg91Token is provided, verify against MSG91 verifyAccessToken API
                 const tokenRes = await msg91_service_1.Msg91Service.verifyAccessToken(msg91Token);
                 if (!tokenRes.success) {

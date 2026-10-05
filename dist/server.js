@@ -10,10 +10,12 @@ const server = app_1.default.listen(config_1.config.port, () => {
     console.log(`🚀 Vaziro API Server running on port ${config_1.config.port} in ${config_1.config.nodeEnv} mode`);
     console.log(`🇮🇳 Market: India | Currency: INR (₹) | Timezone: Asia/Kolkata`);
 });
+// Hostinger optimization: Close idle connections quickly to avoid process exhaustion
 server.keepAliveTimeout = 5000;
 server.headersTimeout = 6000;
 const gracefulShutdown = async (signal) => {
     console.log(`${signal} signal received: closing HTTP server and terminating process gracefully`);
+    // Hard exit fallback after 3 seconds so Hostinger never accumulates zombie processes
     const forceTimer = setTimeout(() => {
         console.error('Graceful shutdown timeout exceeded, forcing process exit.');
         process.exit(0);

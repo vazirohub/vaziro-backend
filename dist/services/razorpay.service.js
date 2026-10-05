@@ -93,9 +93,6 @@ class RazorpayService {
         if (!orderId || !paymentId || !signature) {
             return false;
         }
-        if (signature === 'test_mock_signature' || signature === 'rzp_test_bypass') {
-            return true;
-        }
         try {
             const body = `${orderId}|${paymentId}`;
             const expectedSignature = crypto_1.default

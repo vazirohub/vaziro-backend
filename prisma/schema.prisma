@@ -184,17 +184,33 @@ model ProfessionalProfile {
 }
 
 model Verification {
-  id                   String       @id @default(uuid())
-  professionalProfileId String      @unique
-  status               String       @default("NOT_STARTED") // NOT_STARTED, PENDING, VERIFIED, FAILED, REVIEW_REQUIRED, EXPIRED
-  provider             String       @default("DIGILOCKER") // DIGILOCKER, MANUAL
-  referenceId          String?
-  verifiedAt           DateTime?
-  rejectionReason      String?
-  createdAt            DateTime     @default(now())
-  updatedAt            DateTime     @updatedAt
+  id                    String       @id @default(uuid())
+  professionalProfileId String       @unique
+  status                String       @default("NOT_STARTED") // NOT_STARTED, PENDING, VERIFIED, FAILED, REVIEW_REQUIRED, EXPIRED
+  provider              String       @default("DIGILOCKER") // DIGILOCKER, MANUAL
+  referenceId           String?
+  requestId             String?      @unique
+  transactionId         String?
+  verificationReference String?
+  documentType          String?      @default("AADHAAR")
+  nameMatchStatus       String?      // MATCH, PARTIAL, MISMATCH, NOT_AVAILABLE
+  dobMatchStatus        String?      // MATCH, MISMATCH, NOT_AVAILABLE
+  verifiedAt            DateTime?
+  expiresAt             DateTime?
+  failureReason         String?
+  reviewReason          String?
+  rejectionReason       String?
+  providerResponse      String?
+  attemptCount          Int          @default(0)
+  lastAttemptAt         DateTime?
+  createdAt             DateTime     @default(now())
+  updatedAt             DateTime     @updatedAt
 
-  professional         ProfessionalProfile @relation(fields: [professionalProfileId], references: [id], onDelete: Cascade)
+  professional          ProfessionalProfile @relation(fields: [professionalProfileId], references: [id], onDelete: Cascade)
+
+  @@index([status])
+  @@index([requestId])
+  @@index([transactionId])
 }
 
 // ---------------------------------------------------------

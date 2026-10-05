@@ -26,6 +26,9 @@ router.patch('/jobs/:id/status', AdminController.updateJobStatus);
 
 // Verifications, Settings & Locations
 router.get('/verifications', AdminController.getVerifications);
+router.get('/verifications/:id', AdminController.getVerificationById);
+router.post('/verifications/:id/review', AdminController.markForReview);
+router.post('/verifications/:id/override', AdminController.adminOverride);
 router.patch('/verifications/:id', AdminController.reviewVerification);
 router.get('/settings', AdminController.getSettings);
 router.put('/settings', AdminController.updateSetting);

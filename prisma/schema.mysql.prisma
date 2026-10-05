@@ -183,17 +183,33 @@ model ProfessionalProfile {
 }
 
 model Verification {
-  id                   String       @id @default(uuid()) @db.VarChar(36)
-  professionalProfileId String      @unique @db.VarChar(36)
-  status               String       @default("NOT_STARTED") @db.VarChar(32) // NOT_STARTED, PENDING, VERIFIED, FAILED, REVIEW_REQUIRED, EXPIRED
-  provider             String       @default("DIGILOCKER") @db.VarChar(32) // DIGILOCKER, MANUAL
-  referenceId          String?      @db.VarChar(128)
-  verifiedAt           DateTime?
-  rejectionReason      String?      @db.VarChar(255)
-  createdAt            DateTime     @default(now())
-  updatedAt            DateTime     @updatedAt
+  id                    String       @id @default(uuid()) @db.VarChar(36)
+  professionalProfileId String       @unique @db.VarChar(36)
+  status                String       @default("NOT_STARTED") @db.VarChar(32) // NOT_STARTED, PENDING, VERIFIED, FAILED, REVIEW_REQUIRED, EXPIRED
+  provider              String       @default("DIGILOCKER") @db.VarChar(32) // DIGILOCKER, MANUAL
+  referenceId           String?      @db.VarChar(128)
+  requestId             String?      @unique @db.VarChar(128)
+  transactionId         String?      @db.VarChar(128)
+  verificationReference String?      @db.VarChar(128)
+  documentType          String?      @default("AADHAAR") @db.VarChar(32)
+  nameMatchStatus       String?      @db.VarChar(32) // MATCH, PARTIAL, MISMATCH, NOT_AVAILABLE
+  dobMatchStatus        String?      @db.VarChar(32) // MATCH, MISMATCH, NOT_AVAILABLE
+  verifiedAt            DateTime?
+  expiresAt             DateTime?
+  failureReason         String?      @db.VarChar(500)
+  reviewReason          String?      @db.VarChar(500)
+  rejectionReason       String?      @db.VarChar(500)
+  providerResponse      String?      @db.Text
+  attemptCount          Int          @default(0)
+  lastAttemptAt         DateTime?
+  createdAt             DateTime     @default(now())
+  updatedAt             DateTime     @updatedAt
 
-  professional         ProfessionalProfile @relation(fields: [professionalProfileId], references: [id], onDelete: Cascade)
+  professional          ProfessionalProfile @relation(fields: [professionalProfileId], references: [id], onDelete: Cascade)
+
+  @@index([status])
+  @@index([requestId])
+  @@index([transactionId])
 }
 
 // ---------------------------------------------------------

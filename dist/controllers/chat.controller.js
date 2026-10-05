@@ -129,11 +129,9 @@ class ChatController {
             let sanitizedContent = messageContent;
             const isHired = thread.job && ['HIRED', 'SCHEDULED', 'PREPARING', 'ON_THE_WAY', 'ARRIVED', 'SERVICE_STARTED', 'SERVICE_COMPLETED', 'CUSTOMER_APPROVED'].includes(thread.job.status);
             if (!isHired) {
-                if (PHONE_REGEX.test(messageContent) || EMAIL_REGEX.test(messageContent)) {
-                    sanitizedContent = messageContent
-                        .replace(PHONE_REGEX, '[Phone Number Protected by Vaziro - Available After Hiring]')
-                        .replace(EMAIL_REGEX, '[Email Protected by Vaziro - Available After Hiring]');
-                }
+                sanitizedContent = messageContent
+                    .replace(new RegExp(PHONE_REGEX.source, 'g'), '[Phone Number Protected by Vaziro - Available After Hiring]')
+                    .replace(new RegExp(EMAIL_REGEX.source, 'g'), '[Email Protected by Vaziro - Available After Hiring]');
             }
             const message = await prisma_1.prisma.message.create({
                 data: {
