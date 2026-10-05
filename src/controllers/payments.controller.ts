@@ -224,11 +224,19 @@ export class PaymentsController {
 
       // 3. Server-side payment status verification via Razorpay API (captured / authorized)
       const rzpPayment = await RazorpayService.fetchPayment(razorpayPaymentId);
-      if (rzpPayment && rzpPayment.status === 'failed') {
-        return res.status(400).json({
-          success: false,
-          error: { code: 'PAYMENT_FAILED', message: rzpPayment.error_description || 'Payment failed on Razorpay.' },
-        });
+      if (rzpPayment) {
+        if (rzpPayment.status === 'failed') {
+          return res.status(400).json({
+            success: false,
+            error: { code: 'PAYMENT_FAILED', message: rzpPayment.error_description || 'Payment failed on Razorpay.' },
+          });
+        }
+        if (rzpPayment.order_id && rzpPayment.order_id !== razorpayOrderId) {
+          return res.status(400).json({
+            success: false,
+            error: { code: 'ORDER_MISMATCH', message: 'Payment does not match the specified order ID.' },
+          });
+        }
       }
 
       // 4. Atomic database transaction: Update payment status and activate service

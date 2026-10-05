@@ -24,11 +24,26 @@ app.use(helmet({
 
 
 // CORS Configuration
+const allowedOrigins = new Set([
+  'https://vaziro.in',
+  'https://www.vaziro.in',
+  'https://admin.vaziro.in',
+  'https://api.vaziro.in',
+  'http://localhost:3000',
+  'http://localhost:5173',
+  'http://127.0.0.1:3000',
+  'http://127.0.0.1:5173',
+]);
+
 app.use(
   cors({
     origin: (origin, callback) => {
-      // Allow requests with no origin (like mobile apps, curl, postman) or matching origin
-      callback(null, true);
+      // Allow non-browser requests (mobile apps, server-to-server, curl)
+      if (!origin) return callback(null, true);
+      if (allowedOrigins.has(origin) || origin.endsWith('.vaziro.in')) {
+        return callback(null, true);
+      }
+      return callback(null, false);
     },
     credentials: true,
     maxAge: 86400, // Cache preflight OPTIONS for 24 hours to cut network latency in half

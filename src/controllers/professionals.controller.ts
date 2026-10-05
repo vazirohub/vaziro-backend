@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import { prisma } from '../lib/prisma';
+import { ApiSetuService } from '../services/apisetu.service';
 
 export class ProfessionalsController {
   /**
@@ -199,6 +200,83 @@ export class ProfessionalsController {
       return res.status(500).json({
         success: false,
         error: { message: error.message || 'Failed to complete DigiLocker verification' },
+      });
+    }
+  }
+
+  /**
+   * GET /api/v1/professionals/verify/apisetu/initiate
+   * Initiates DigiLocker / MeriPehchaan OAuth2 authorization flow
+   */
+  static async initiateApiSetuVerification(req: Request, res: Response) {
+    try {
+      const userId = req.user?.id;
+      if (!userId) {
+        return res.status(401).json({ success: false, error: { message: 'Unauthorized' } });
+      }
+
+      const { authUrl, state } = ApiSetuService.generateAuthorizationUrl(userId);
+
+      return res.status(200).json({
+        success: true,
+        data: {
+          authUrl,
+          state,
+          provider: 'APISETU_DIGILOCKER',
+        },
+      });
+    } catch (error: any) {
+      return res.status(500).json({
+        success: false,
+        error: { message: error.message || 'Failed to initiate API Setu DigiLocker verification' },
+      });
+    }
+  }
+
+  /**
+   * POST /api/v1/professionals/verify/apisetu/callback
+   * Completes OAuth2 authorization code exchange and records verified status
+   */
+  static async completeApiSetuVerification(req: Request, res: Response) {
+    try {
+      const { code, state } = req.body;
+
+      if (!code) {
+        return res.status(400).json({
+          success: false,
+          error: { message: 'Authorization code is required from API Setu callback.' },
+        });
+      }
+
+      if (!state) {
+        return res.status(400).json({
+          success: false,
+          error: { message: 'State parameter is required for CSRF validation.' },
+        });
+      }
+
+      // Verify state and extract userId
+      const { userId } = ApiSetuService.verifyState(state);
+
+      // Verify that if a user is currently logged in, they match the state's userId
+      if (req.user?.id && req.user.id !== userId) {
+        return res.status(403).json({
+          success: false,
+          error: { message: 'Verification state user mismatch.' },
+        });
+      }
+
+      const result = await ApiSetuService.completeVerification(userId, code);
+
+      return res.status(200).json({
+        success: true,
+        message: '✓ Verified via DigiLocker successfully. Government identity credentials confirmed.',
+        data: result,
+      });
+    } catch (error: any) {
+      return res.status(400).json({
+        success: false,
+        error: { message: error.message || 'DigiLocker verification failed. Please try again.' },
       });
     }
   }

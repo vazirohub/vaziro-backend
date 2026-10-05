@@ -313,12 +313,12 @@ export class CreditService {
         }
       }
 
-      // 3. Update wallet balance
+      // 3. Update wallet balance atomically
       const updatedWallet = await tx.creditWallet.update({
         where: { id: wallet.id },
         data: {
-          balance: newBalance,
-          lifetimeSpent: wallet.lifetimeSpent + creditsCost,
+          balance: { decrement: creditsCost },
+          lifetimeSpent: { increment: creditsCost },
         },
       });
 

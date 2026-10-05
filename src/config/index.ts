@@ -66,4 +66,12 @@ export const config = {
     projectNumber: process.env.GEMINI_PROJECT_NUMBER || '530691641234',
     model: process.env.GEMINI_MODEL || 'gemini-flash-latest',
   },
+  apisetu: {
+    clientId: process.env.APISETU_CLIENT_ID || 'YK6E0D1030',
+    clientSecret: process.env.APISETU_CLIENT_SECRET || '0594771958edb2f1888c',
+    redirectUri: process.env.APISETU_REDIRECT_URI || 'https://vaziro.in/verify/callback',
+    authUrl: process.env.APISETU_AUTH_URL || 'https://apisetu.gov.in/auth/realms/apisetu/protocol/openid-connect/auth',
+    tokenUrl: process.env.APISETU_TOKEN_URL || 'https://apisetu.gov.in/auth/realms/apisetu/protocol/openid-connect/token',
+    userInfoUrl: process.env.APISETU_USERINFO_URL || 'https://apisetu.gov.in/auth/realms/apisetu/protocol/openid-connect/userinfo',
+  },
 };

@@ -103,7 +103,7 @@ export class AIAccountToolsService {
         const reqList = user.customerProfile.requirements
           .map(
             (r: any) =>
-              `• "${r.title}" (Status: ${r.status}, Budget: ₹${r.minimumBudget || 0}-₹${r.maximumBudget || 0}, ${r.quotations.length} quotes received)`
+              `• "${r.title}" (Status: ${r.status}, Budget: ₹${r.budgetMin || 0}${r.budgetMax ? ` - ₹${r.budgetMax}` : ''}, ${r.quotations.length} quotes received)`
           )
           .join('; ');
         parts.push(`Recent Posted Requirements: ${reqList}`);
