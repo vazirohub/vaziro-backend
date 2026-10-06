@@ -1,10 +1,16 @@
+import http from 'http';
 import app from './app';
 import { config } from './config';
 import { prisma } from './lib/prisma';
+import { SocketService } from './services/socket.service';
 
-const server = app.listen(config.port, () => {
+const server = http.createServer(app);
+SocketService.init(server);
+
+server.listen(config.port, () => {
   console.log(`🚀 Vaziro API Server running on port ${config.port} in ${config.nodeEnv} mode`);
   console.log(`🇮🇳 Market: India | Currency: INR (₹) | Timezone: Asia/Kolkata`);
+  console.log(`⚡ Real-Time Socket.IO engine attached & active`);
 });
 
 // Hostinger optimization: Close idle connections quickly to avoid process exhaustion

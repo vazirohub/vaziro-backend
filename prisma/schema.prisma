@@ -34,6 +34,12 @@ model User {
   notificationPref  NotificationPreference?
   messagesSent      Message[]    @relation("UserMessages")
   chatParticipants  ChatParticipant[]
+  callRequestsMade      CallRequest[]        @relation("CallRequestsMade")
+  callRequestsReceived  CallRequest[]        @relation("CallRequestsReceived")
+  reportsFiled          ConversationReport[] @relation("ReportsFiled")
+  reportsReceived       ConversationReport[] @relation("ReportsReceived")
+  blocksCreated         ConversationBlock[]  @relation("BlocksCreated")
+  blocksReceived        ConversationBlock[]  @relation("BlocksReceived")
   statusChanges     JobStatusHistory[] @relation("StatusChanger")
   disputesRaised    Dispute[]    @relation("DisputeRaiser")
   evidences         DisputeEvidence[] @relation("EvidenceSubmitter")
@@ -429,6 +435,7 @@ model Requirement {
   jobs                  Job[]
   chatThreads           ChatThread[]
   callSessions          CallSession[]
+  callRequests          CallRequest[]
   boosts                RequirementBoost[]
 
   @@index([customerId])
@@ -561,6 +568,7 @@ model Job {
   paymentProtection        PaymentProtection?
   chatThread               ChatThread?
   callSessions             CallSession[]
+  callRequests             CallRequest[]
   review                   Review?
   disputes                 Dispute[]
   invoices                 Invoice[]
@@ -1116,6 +1124,8 @@ model ChatThread {
   jobId         String?           @unique
   requirementId String?
   isActive      Boolean           @default(true)
+  status        String            @default("ACTIVE") // ACTIVE, ARCHIVED, CLOSED, BLOCKED
+  lastMessageAt DateTime?
   createdAt     DateTime          @default(now())
   updatedAt     DateTime          @updatedAt
 
@@ -1123,8 +1133,12 @@ model ChatThread {
   requirement   Requirement?      @relation(fields: [requirementId], references: [id], onDelete: Cascade)
   participants  ChatParticipant[]
   messages      Message[]
+  callRequests  CallRequest[]
+  reports       ConversationReport[]
+  blocks        ConversationBlock[]
 
   @@index([requirementId])
+  @@index([status])
 }
 
 model ChatParticipant {
@@ -1133,6 +1147,8 @@ model ChatParticipant {
   userId       String
   lastReadAt   DateTime?
   joinedAt     DateTime   @default(now())
+  isBlocked    Boolean    @default(false)
+  isArchived   Boolean    @default(false)
 
   chatThread   ChatThread @relation(fields: [chatThreadId], references: [id], onDelete: Cascade)
   user         User       @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -1142,24 +1158,31 @@ model ChatParticipant {
 }
 
 model Message {
-  id           String              @id @default(uuid())
-  chatThreadId String
-  senderUserId String
-  content      String
-  messageType  String              @default("TEXT") // TEXT, ATTACHMENT, SYSTEM
-  createdAt    DateTime            @default(now())
+  id               String              @id @default(uuid())
+  chatThreadId     String
+  senderUserId     String
+  content          String
+  messageType      String              @default("TEXT") // TEXT, IMAGE, FILE, SYSTEM
+  status           String              @default("SENT") // SENDING, SENT, DELIVERED, READ, FAILED
+  isContactWarning Boolean             @default(false)
+  createdAt        DateTime            @default(now())
+  updatedAt        DateTime            @default(now()) @updatedAt
+  deletedAt        DateTime?
 
   chatThread   ChatThread          @relation(fields: [chatThreadId], references: [id], onDelete: Cascade)
   sender       User                @relation("UserMessages", fields: [senderUserId], references: [id], onDelete: Cascade)
   attachments  MessageAttachment[]
+  reports      ConversationReport[]
 
   @@index([chatThreadId])
+  @@index([senderUserId])
 }
 
 model MessageAttachment {
   id        String   @id @default(uuid())
   messageId String
   fileUrl   String
+  fileName  String?
   fileType  String?
   fileSize  Int?
   createdAt DateTime @default(now())
@@ -1167,6 +1190,81 @@ model MessageAttachment {
   message   Message  @relation(fields: [messageId], references: [id], onDelete: Cascade)
 
   @@index([messageId])
+}
+
+model CallRequest {
+  id                 String       @id @default(uuid())
+  chatThreadId       String?
+  jobId              String?
+  requirementId      String?
+  requesterUserId    String
+  receiverUserId     String
+  status             String       @default("PENDING") // PENDING, ACCEPTED, DECLINED, CANCELLED, EXPIRED, COMPLETED
+  requestedDate      DateTime
+  requestedStartTime String       // e.g. "16:00" or "04:00 PM"
+  requestedEndTime   String?      // e.g. "16:30" or "04:30 PM"
+  message            String?
+  acceptedAt         DateTime?
+  declinedAt         DateTime?
+  cancelledAt        DateTime?
+  completedAt        DateTime?
+  expiresAt          DateTime?
+  callSessionId      String?
+  createdAt          DateTime     @default(now())
+  updatedAt          DateTime     @updatedAt
+
+  chatThread         ChatThread?  @relation(fields: [chatThreadId], references: [id], onDelete: Cascade)
+  job                Job?         @relation(fields: [jobId], references: [id], onDelete: SetNull)
+  requirement        Requirement? @relation(fields: [requirementId], references: [id], onDelete: SetNull)
+  requester          User         @relation("CallRequestsMade", fields: [requesterUserId], references: [id], onDelete: Cascade)
+  receiver           User         @relation("CallRequestsReceived", fields: [receiverUserId], references: [id], onDelete: Cascade)
+
+  @@index([chatThreadId])
+  @@index([requesterUserId])
+  @@index([receiverUserId])
+  @@index([status])
+}
+
+model ConversationReport {
+  id               String       @id @default(uuid())
+  chatThreadId     String?
+  messageId        String?
+  reporterUserId   String
+  reportedUserId   String
+  reason           String       // SPAM, HARASSMENT, FRAUD_SCAM, INAPPROPRIATE, EXTERNAL_PAYMENT, OTHER
+  description      String?
+  status           String       @default("OPEN") // OPEN, UNDER_REVIEW, RESOLVED, DISMISSED
+  adminNotes       String?
+  resolvedByUserId String?
+  resolvedAt       DateTime?
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+
+  chatThread       ChatThread?  @relation(fields: [chatThreadId], references: [id], onDelete: SetNull)
+  message          Message?     @relation(fields: [messageId], references: [id], onDelete: SetNull)
+  reporter         User         @relation("ReportsFiled", fields: [reporterUserId], references: [id], onDelete: Cascade)
+  reportedUser     User         @relation("ReportsReceived", fields: [reportedUserId], references: [id], onDelete: Cascade)
+
+  @@index([status])
+  @@index([reporterUserId])
+  @@index([reportedUserId])
+}
+
+model ConversationBlock {
+  id            String       @id @default(uuid())
+  chatThreadId  String?
+  blockerUserId String
+  blockedUserId String
+  reason        String?
+  createdAt     DateTime     @default(now())
+
+  chatThread    ChatThread?  @relation(fields: [chatThreadId], references: [id], onDelete: Cascade)
+  blocker       User         @relation("BlocksCreated", fields: [blockerUserId], references: [id], onDelete: Cascade)
+  blockedUser   User         @relation("BlocksReceived", fields: [blockedUserId], references: [id], onDelete: Cascade)
+
+  @@unique([blockerUserId, blockedUserId])
+  @@index([blockerUserId])
+  @@index([blockedUserId])
 }
 
 model CallSession {

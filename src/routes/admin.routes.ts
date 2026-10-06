@@ -58,4 +58,9 @@ router.get('/credits/batches', AdminController.getCreditBatches);
 router.get('/credits/ledger', AdminController.getCreditLedger);
 router.post('/credits/process-expired', AdminController.triggerBatchExpiry);
 
+// Communication Moderation & Reports
+router.get('/reports', AdminController.getReports);
+router.get('/reports/:id', AdminController.getReportById);
+router.post('/reports/:id/resolve', AdminController.resolveReport);
+
 export default router;

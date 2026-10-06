@@ -16,4 +16,6 @@ npm-debug.log*
 *.db-wal
 prisma/*.db-shm
 prisma/*.db-wal
+public/uploads/*
+!public/uploads/.gitkeep
 

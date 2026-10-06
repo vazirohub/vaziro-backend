@@ -1,4 +1,37 @@
 "use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
@@ -1196,6 +1229,51 @@ class AdminController {
                 success: false,
                 error: { message: error.message || 'Failed to process expired batches' },
             });
+        }
+    }
+    /**
+     * Communication Moderation
+     */
+    static async getReports(req, res) {
+        try {
+            const { status, page, limit } = req.query;
+            const { ReportService } = await Promise.resolve().then(() => __importStar(require('../services/report.service')));
+            const data = await ReportService.getReports({
+                status: status,
+                page: page ? Number(page) : undefined,
+                limit: limit ? Number(limit) : undefined,
+            });
+            return res.status(200).json({ success: true, data });
+        }
+        catch (error) {
+            return res.status(500).json({ success: false, error: { message: error.message || 'Failed to fetch reports' } });
+        }
+    }
+    static async getReportById(req, res) {
+        try {
+            const { id } = req.params;
+            const { ReportService } = await Promise.resolve().then(() => __importStar(require('../services/report.service')));
+            const report = await ReportService.getReportById(id);
+            if (!report) {
+                return res.status(404).json({ success: false, error: { message: 'Report not found' } });
+            }
+            return res.status(200).json({ success: true, data: report });
+        }
+        catch (error) {
+            return res.status(500).json({ success: false, error: { message: error.message || 'Failed to fetch report' } });
+        }
+    }
+    static async resolveReport(req, res) {
+        try {
+            const adminUserId = req.user.id;
+            const { id } = req.params;
+            const { status, adminNotes } = req.body;
+            const { ReportService } = await Promise.resolve().then(() => __importStar(require('../services/report.service')));
+            const updated = await ReportService.resolveReport(adminUserId, id, { status, adminNotes });
+            return res.status(200).json({ success: true, message: 'Report resolved', data: updated });
+        }
+        catch (error) {
+            return res.status(400).json({ success: false, error: { message: error.message || 'Failed to resolve report' } });
         }
     }
 }

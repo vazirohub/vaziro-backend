@@ -49,4 +49,8 @@ router.put('/boost-packages/:id', admin_controller_1.AdminController.updateBoost
 router.get('/credits/batches', admin_controller_1.AdminController.getCreditBatches);
 router.get('/credits/ledger', admin_controller_1.AdminController.getCreditLedger);
 router.post('/credits/process-expired', admin_controller_1.AdminController.triggerBatchExpiry);
+// Communication Moderation & Reports
+router.get('/reports', admin_controller_1.AdminController.getReports);
+router.get('/reports/:id', admin_controller_1.AdminController.getReportById);
+router.post('/reports/:id/resolve', admin_controller_1.AdminController.resolveReport);
 exports.default = router;

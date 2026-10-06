@@ -142,6 +142,114 @@ export async function ensureDatabaseSchema(): Promise<void> {
         createdAt DATETIME DEFAULT CURRENT_TIMESTAMP
       )`)
     ).catch(() => {});
+
+    // Check ChatThread columns
+    const threadCols = await withTimeout(
+      prisma.$queryRawUnsafe<Array<{ name: string }>>(`PRAGMA table_info(ChatThread)`)
+    ).catch(() => []);
+    const threadColNames = new Set((threadCols || []).map((c: any) => c.name?.toLowerCase()));
+    if (!threadColNames.has('status')) {
+      await withTimeout(prisma.$executeRawUnsafe(`ALTER TABLE ChatThread ADD COLUMN status TEXT DEFAULT 'ACTIVE'`)).catch(() => {});
+    }
+    if (!threadColNames.has('lastmessageat')) {
+      await withTimeout(prisma.$executeRawUnsafe(`ALTER TABLE ChatThread ADD COLUMN lastMessageAt DATETIME`)).catch(() => {});
+    }
+
+    // Check ChatParticipant columns
+    const partCols = await withTimeout(
+      prisma.$queryRawUnsafe<Array<{ name: string }>>(`PRAGMA table_info(ChatParticipant)`)
+    ).catch(() => []);
+    const partColNames = new Set((partCols || []).map((c: any) => c.name?.toLowerCase()));
+    if (!partColNames.has('isblocked')) {
+      await withTimeout(prisma.$executeRawUnsafe(`ALTER TABLE ChatParticipant ADD COLUMN isBlocked BOOLEAN DEFAULT 0`)).catch(() => {});
+    }
+    if (!partColNames.has('isarchived')) {
+      await withTimeout(prisma.$executeRawUnsafe(`ALTER TABLE ChatParticipant ADD COLUMN isArchived BOOLEAN DEFAULT 0`)).catch(() => {});
+    }
+
+    // Check Message columns
+    const msgCols = await withTimeout(
+      prisma.$queryRawUnsafe<Array<{ name: string }>>(`PRAGMA table_info(Message)`)
+    ).catch(() => []);
+    const msgColNames = new Set((msgCols || []).map((c: any) => c.name?.toLowerCase()));
+    if (!msgColNames.has('status')) {
+      await withTimeout(prisma.$executeRawUnsafe(`ALTER TABLE Message ADD COLUMN status TEXT DEFAULT 'SENT'`)).catch(() => {});
+    }
+    if (!msgColNames.has('iscontactwarning')) {
+      await withTimeout(prisma.$executeRawUnsafe(`ALTER TABLE Message ADD COLUMN isContactWarning BOOLEAN DEFAULT 0`)).catch(() => {});
+    }
+    if (!msgColNames.has('updatedat')) {
+      await withTimeout(prisma.$executeRawUnsafe(`ALTER TABLE Message ADD COLUMN updatedAt DATETIME`)).catch(() => {});
+    }
+    if (!msgColNames.has('deletedat')) {
+      await withTimeout(prisma.$executeRawUnsafe(`ALTER TABLE Message ADD COLUMN deletedAt DATETIME`)).catch(() => {});
+    }
+
+    // Check MessageAttachment columns
+    const attCols = await withTimeout(
+      prisma.$queryRawUnsafe<Array<{ name: string }>>(`PRAGMA table_info(MessageAttachment)`)
+    ).catch(() => []);
+    const attColNames = new Set((attCols || []).map((c: any) => c.name?.toLowerCase()));
+    if (!attColNames.has('filename')) {
+      await withTimeout(prisma.$executeRawUnsafe(`ALTER TABLE MessageAttachment ADD COLUMN fileName TEXT`)).catch(() => {});
+    }
+
+    // Ensure CallRequest table exists
+    await withTimeout(
+      prisma.$executeRawUnsafe(`CREATE TABLE IF NOT EXISTS CallRequest (
+        id TEXT PRIMARY KEY,
+        chatThreadId TEXT,
+        jobId TEXT,
+        requirementId TEXT,
+        requesterUserId TEXT NOT NULL,
+        receiverUserId TEXT NOT NULL,
+        status TEXT DEFAULT 'PENDING',
+        requestedDate DATETIME NOT NULL,
+        requestedStartTime TEXT NOT NULL,
+        requestedEndTime TEXT,
+        message TEXT,
+        acceptedAt DATETIME,
+        declinedAt DATETIME,
+        cancelledAt DATETIME,
+        completedAt DATETIME,
+        expiresAt DATETIME,
+        callSessionId TEXT,
+        createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP
+      )`)
+    ).catch(() => {});
+
+    // Ensure ConversationReport table exists
+    await withTimeout(
+      prisma.$executeRawUnsafe(`CREATE TABLE IF NOT EXISTS ConversationReport (
+        id TEXT PRIMARY KEY,
+        chatThreadId TEXT,
+        messageId TEXT,
+        reporterUserId TEXT NOT NULL,
+        reportedUserId TEXT NOT NULL,
+        reason TEXT NOT NULL,
+        description TEXT,
+        status TEXT DEFAULT 'OPEN',
+        adminNotes TEXT,
+        resolvedByUserId TEXT,
+        resolvedAt DATETIME,
+        createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP
+      )`)
+    ).catch(() => {});
+
+    // Ensure ConversationBlock table exists
+    await withTimeout(
+      prisma.$executeRawUnsafe(`CREATE TABLE IF NOT EXISTS ConversationBlock (
+        id TEXT PRIMARY KEY,
+        chatThreadId TEXT,
+        blockerUserId TEXT NOT NULL,
+        blockedUserId TEXT NOT NULL,
+        reason TEXT,
+        createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(blockerUserId, blockedUserId)
+      )`)
+    ).catch(() => {});
   } catch {
     // Fallback: ignore any migration check issues
   }

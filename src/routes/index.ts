@@ -17,6 +17,7 @@ import adminRoutes from './admin.routes';
 import boostRoutes from './boost.routes';
 import notificationsRoutes from './notifications.routes';
 import aiRoutes from './ai.routes';
+import conversationsRoutes, { callRequestsRouter } from './conversations.routes';
 
 const router = Router();
 
@@ -31,6 +32,8 @@ router.use('/credits', creditsRoutes);
 router.use('/quotations', quotationsRoutes);
 router.use('/professionals', professionalsRoutes);
 router.use('/jobs', jobsRoutes);
+router.use('/conversations', conversationsRoutes);
+router.use('/call-requests', callRequestsRouter);
 router.use('/chat', chatRoutes);
 router.use('/calls', callsRoutes);
 router.use('/payments', paymentsRoutes);

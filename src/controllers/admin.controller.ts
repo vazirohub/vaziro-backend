@@ -1296,4 +1296,49 @@ export class AdminController {
       });
     }
   }
+
+  /**
+   * Communication Moderation
+   */
+  static async getReports(req: Request, res: Response) {
+    try {
+      const { status, page, limit } = req.query;
+      const { ReportService } = await import('../services/report.service');
+      const data = await ReportService.getReports({
+        status: status as string,
+        page: page ? Number(page) : undefined,
+        limit: limit ? Number(limit) : undefined,
+      });
+      return res.status(200).json({ success: true, data });
+    } catch (error: any) {
+      return res.status(500).json({ success: false, error: { message: error.message || 'Failed to fetch reports' } });
+    }
+  }
+
+  static async getReportById(req: Request, res: Response) {
+    try {
+      const { id } = req.params;
+      const { ReportService } = await import('../services/report.service');
+      const report = await ReportService.getReportById(id);
+      if (!report) {
+        return res.status(404).json({ success: false, error: { message: 'Report not found' } });
+      }
+      return res.status(200).json({ success: true, data: report });
+    } catch (error: any) {
+      return res.status(500).json({ success: false, error: { message: error.message || 'Failed to fetch report' } });
+    }
+  }
+
+  static async resolveReport(req: Request, res: Response) {
+    try {
+      const adminUserId = req.user!.id;
+      const { id } = req.params;
+      const { status, adminNotes } = req.body;
+      const { ReportService } = await import('../services/report.service');
+      const updated = await ReportService.resolveReport(adminUserId, id, { status, adminNotes });
+      return res.status(200).json({ success: true, message: 'Report resolved', data: updated });
+    } catch (error: any) {
+      return res.status(400).json({ success: false, error: { message: error.message || 'Failed to resolve report' } });
+    }
+  }
 }
