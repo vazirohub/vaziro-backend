@@ -22,8 +22,9 @@ router.post('/verification/webhook', professionals_controller_1.ProfessionalsCon
 router.get('/verify/apisetu/initiate', auth_middleware_1.authenticate, (0, auth_middleware_1.requireRoles)('PROFESSIONAL', 'ADMIN', 'SUPER_ADMIN'), professionals_controller_1.ProfessionalsController.initiateApiSetuVerification);
 router.post('/verify/apisetu/callback', professionals_controller_1.ProfessionalsController.completeApiSetuVerification);
 router.post('/verify/digilocker', auth_middleware_1.authenticate, (0, auth_middleware_1.requireRoles)('PROFESSIONAL', 'ADMIN', 'SUPER_ADMIN'), professionals_controller_1.ProfessionalsController.verifyDigiLocker);
-// Public profile views (slug, id/public, and id)
-router.get('/slug/:slug', professionals_controller_1.ProfessionalsController.getPublicProfile);
-router.get('/:id/public', professionals_controller_1.ProfessionalsController.getPublicProfile);
-router.get('/:idOrSlug', professionals_controller_1.ProfessionalsController.getPublicProfile);
+// Public profile views (list, slug, id/public, and id)
+router.get('/', auth_middleware_1.optionalAuthenticate, professionals_controller_1.ProfessionalsController.listProfessionals);
+router.get('/slug/:slug', auth_middleware_1.optionalAuthenticate, professionals_controller_1.ProfessionalsController.getPublicProfile);
+router.get('/:id/public', auth_middleware_1.optionalAuthenticate, professionals_controller_1.ProfessionalsController.getPublicProfile);
+router.get('/:idOrSlug', auth_middleware_1.optionalAuthenticate, professionals_controller_1.ProfessionalsController.getPublicProfile);
 exports.default = router;

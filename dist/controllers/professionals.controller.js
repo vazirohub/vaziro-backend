@@ -19,8 +19,9 @@ function generateSlug(firstName, lastName, id) {
 }
 /**
  * Standard public serializer ensuring zero sensitive data leaks
+ * Contact details (phone & email) are strictly hidden unless the requester has hired the professional
  */
-function serializePublicProfile(profile, reviews = []) {
+function serializePublicProfile(profile, reviews = [], isHired = false) {
     const trustResult = trust_score_service_1.TrustScoreService.calculate(profile);
     const fullName = `${profile.user?.firstName || ''} ${profile.user?.lastName || ''}`.trim() || 'Vaziro Professional';
     return {
@@ -55,6 +56,14 @@ function serializePublicProfile(profile, reviews = []) {
         serviceAreas: Array.isArray(profile.serviceAreas)
             ? profile.serviceAreas.map((sa) => sa.area?.name || sa.pincode?.pincode || sa.name || 'Service Area')
             : [],
+        // Contact privacy: hidden unless hired by current customer
+        phone: isHired ? (profile.user?.phone || null) : null,
+        email: isHired ? (profile.user?.email || null) : null,
+        isHiredByCurrentUser: Boolean(isHired),
+        canViewContact: Boolean(isHired),
+        contactLockedReason: isHired
+            ? null
+            : 'Contact details (mobile and email) are protected and will unlock automatically after you hire this professional.',
         trustSummary: {
             ...trustResult.publicSummary,
             trustLevel: trustResult.trustLevel,
@@ -852,6 +861,144 @@ class ProfessionalsController {
         }
     }
     /**
+     * GET /api/v1/professionals
+     * Search and filter public professionals directory (Upwork-style)
+     */
+    static async listProfessionals(req, res) {
+        try {
+            const q = typeof req.query.q === 'string' ? req.query.q.trim() : '';
+            const category = typeof req.query.category === 'string' ? req.query.category.trim() : '';
+            const subcategory = typeof req.query.subcategory === 'string' ? req.query.subcategory.trim() : '';
+            const city = typeof req.query.city === 'string' ? req.query.city.trim() : '';
+            const verifiedOnly = req.query.verifiedOnly === 'true' || req.query.verifiedOnly === '1';
+            const minRate = req.query.minRate ? Number(req.query.minRate) : undefined;
+            const maxRate = req.query.maxRate ? Number(req.query.maxRate) : undefined;
+            const minExperience = req.query.minExperience ? Number(req.query.minExperience) : undefined;
+            const sortBy = typeof req.query.sortBy === 'string' ? req.query.sortBy : 'rating';
+            const page = Math.max(1, parseInt(req.query.page) || 1);
+            const limit = Math.min(50, Math.max(1, parseInt(req.query.limit) || 20));
+            const skip = (page - 1) * limit;
+            const where = {
+                visibility: 'PUBLIC',
+            };
+            if (verifiedOnly) {
+                where.isVerified = true;
+            }
+            if (category) {
+                where.OR = [
+                    ...(where.OR || []),
+                    { category: { slug: category } },
+                    { category: { name: { contains: category } } },
+                    { categoryId: category },
+                ];
+            }
+            if (subcategory) {
+                where.OR = [
+                    ...(where.OR || []),
+                    { subcategory: { slug: subcategory } },
+                    { subcategory: { name: { contains: subcategory } } },
+                    { subcategoryId: subcategory },
+                ];
+            }
+            if (minRate !== undefined && !isNaN(minRate)) {
+                where.hourlyRate = { ...(where.hourlyRate || {}), gte: minRate };
+            }
+            if (maxRate !== undefined && !isNaN(maxRate)) {
+                where.hourlyRate = { ...(where.hourlyRate || {}), lte: maxRate };
+            }
+            if (minExperience !== undefined && !isNaN(minExperience)) {
+                where.yearsOfExperience = { gte: minExperience };
+            }
+            if (city) {
+                where.OR = [
+                    ...(where.OR || []),
+                    { serviceAreas: { some: { area: { city: { name: { contains: city } } } } } },
+                    { serviceAreas: { some: { area: { name: { contains: city } } } } },
+                    { bio: { contains: city } },
+                ];
+            }
+            if (q) {
+                where.AND = [
+                    ...(where.AND || []),
+                    {
+                        OR: [
+                            { title: { contains: q } },
+                            { bio: { contains: q } },
+                            { user: { firstName: { contains: q } } },
+                            { user: { lastName: { contains: q } } },
+                            { skills: { some: { skill: { name: { contains: q } } } } },
+                            { category: { name: { contains: q } } },
+                        ],
+                    },
+                ];
+            }
+            let orderBy = [{ rating: 'desc' }, { completedJobsCount: 'desc' }];
+            if (sortBy === 'rate_asc')
+                orderBy = [{ hourlyRate: 'asc' }];
+            else if (sortBy === 'rate_desc')
+                orderBy = [{ hourlyRate: 'desc' }];
+            else if (sortBy === 'experience')
+                orderBy = [{ yearsOfExperience: 'desc' }];
+            else if (sortBy === 'jobs')
+                orderBy = [{ completedJobsCount: 'desc' }];
+            else if (sortBy === 'newest')
+                orderBy = [{ createdAt: 'desc' }];
+            const [total, rawProfiles] = await Promise.all([
+                prisma_1.prisma.professionalProfile.count({ where }),
+                prisma_1.prisma.professionalProfile.findMany({
+                    where,
+                    include: {
+                        user: true,
+                        category: true,
+                        subcategory: true,
+                        verification: true,
+                        skills: { include: { skill: true } },
+                        serviceAreas: { include: { area: true, pincode: true } },
+                    },
+                    orderBy,
+                    skip,
+                    take: limit,
+                }),
+            ]);
+            // Check which professionals the current authenticated user has hired
+            let hiredProIdSet = new Set();
+            if (req.user?.id && rawProfiles.length > 0) {
+                const customer = await prisma_1.prisma.customerProfile.findUnique({
+                    where: { userId: req.user.id },
+                    select: { id: true },
+                });
+                if (customer) {
+                    const hiredJobs = await prisma_1.prisma.job.findMany({
+                        where: {
+                            customerId: customer.id,
+                            professionalProfileId: { in: rawProfiles.map((p) => p.id) },
+                            status: { notIn: ['CANCELLED'] },
+                        },
+                        select: { professionalProfileId: true },
+                    });
+                    hiredProIdSet = new Set(hiredJobs.map((j) => j.professionalProfileId));
+                }
+            }
+            const serialized = rawProfiles.map((profile) => serializePublicProfile(profile, [], hiredProIdSet.has(profile.id)));
+            return res.status(200).json({
+                success: true,
+                data: {
+                    professionals: serialized,
+                    total,
+                    page,
+                    limit,
+                    totalPages: Math.ceil(total / limit),
+                },
+            });
+        }
+        catch (error) {
+            return res.status(500).json({
+                success: false,
+                error: { message: error.message || 'Failed to list professionals' },
+            });
+        }
+    }
+    /**
      * GET /api/v1/professionals/:idOrSlug
      * GET /api/v1/professionals/:id/public
      * GET /api/v1/professionals/slug/:slug
@@ -898,7 +1045,27 @@ class ProfessionalsController {
                     error: { message: 'This professional profile is currently set to private.' },
                 });
             }
-            const publicData = serializePublicProfile(profile, profile.reviewsReceived);
+            // Check if current user has hired this professional
+            let isHired = false;
+            if (req.user?.id) {
+                const customer = await prisma_1.prisma.customerProfile.findUnique({
+                    where: { userId: req.user.id },
+                    select: { id: true },
+                });
+                if (customer) {
+                    const hiredJob = await prisma_1.prisma.job.findFirst({
+                        where: {
+                            customerId: customer.id,
+                            professionalProfileId: profile.id,
+                            status: { notIn: ['CANCELLED'] },
+                        },
+                        select: { id: true },
+                    });
+                    if (hiredJob)
+                        isHired = true;
+                }
+            }
+            const publicData = serializePublicProfile(profile, profile.reviewsReceived, isHired);
             return res.status(200).json({
                 success: true,
                 data: publicData,

@@ -25,9 +25,10 @@ router.get('/verify/apisetu/initiate', authenticate, requireRoles('PROFESSIONAL'
 router.post('/verify/apisetu/callback', ProfessionalsController.completeApiSetuVerification);
 router.post('/verify/digilocker', authenticate, requireRoles('PROFESSIONAL', 'ADMIN', 'SUPER_ADMIN'), ProfessionalsController.verifyDigiLocker);
 
-// Public profile views (slug, id/public, and id)
-router.get('/slug/:slug', ProfessionalsController.getPublicProfile);
-router.get('/:id/public', ProfessionalsController.getPublicProfile);
-router.get('/:idOrSlug', ProfessionalsController.getPublicProfile);
+// Public profile views (list, slug, id/public, and id)
+router.get('/', optionalAuthenticate, ProfessionalsController.listProfessionals);
+router.get('/slug/:slug', optionalAuthenticate, ProfessionalsController.getPublicProfile);
+router.get('/:id/public', optionalAuthenticate, ProfessionalsController.getPublicProfile);
+router.get('/:idOrSlug', optionalAuthenticate, ProfessionalsController.getPublicProfile);
 
 export default router;
