@@ -140,10 +140,17 @@ export class NotificationsController {
         subject: 'Vaziro Transactional Email System Verification',
         html: NotificationService.generateEmailTemplate({
           title: 'Vaziro Email System Operational',
-          message: 'This test message confirms that the Vaziro transactional email engine via Resend is working properly with full HTML formatting and delivery reporting.',
+          message: 'This message confirms that the Vaziro transactional email engine via Resend is working properly with dark-mode resilient branding, dynamic dual-logo switching, and HTML delivery reporting.',
           userName: req.user?.firstName || 'Valued Partner',
+          badge: 'SYSTEM OPERATIONAL',
           actionUrl: `${config.frontendUrl}/dashboard`,
           actionText: 'Go to Dashboard',
+          metaRows: [
+            { label: 'Status', value: '100% Operational' },
+            { label: 'Dark Mode Support', value: 'Dual-Logo & Halo Fallback Active' },
+            { label: 'Platform Commission', value: '0% Direct Connect' },
+          ],
+          subNote: '🔒 Security Advisory: This is an automated system diagnostic. Vaziro staff will never ask for your password or OTP.',
         }),
       });
 
