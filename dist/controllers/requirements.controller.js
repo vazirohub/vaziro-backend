@@ -237,11 +237,15 @@ class RequirementsController {
                 whereClause.subcategoryId = String(subcategoryId);
             if (cityId)
                 whereClause.cityId = String(cityId);
-            if (status) {
-                whereClause.status = String(status);
+            if (status && String(status).toUpperCase() !== 'ALL') {
+                const statusList = String(status).split(',').map((s) => s.trim().toUpperCase());
+                whereClause.status = statusList.length === 1 ? statusList[0] : { in: statusList };
+            }
+            else if (String(status).toUpperCase() === 'ALL') {
+                whereClause.status = { notIn: ['DRAFT', 'DELETED', 'CANCELLED', 'EXPIRED'] };
             }
             else {
-                whereClause.status = { in: ['PUBLISHED', 'RECEIVING_QUOTES'] };
+                whereClause.status = { in: ['OPEN', 'PUBLISHED', 'RECEIVING_QUOTES', 'ACTIVE', 'PENDING', 'SHORTLISTED'] };
             }
             const requirements = await prisma_1.prisma.requirement.findMany({
                 where: whereClause,
@@ -284,11 +288,11 @@ class RequirementsController {
                     maximumBudget: item.budgetMax,
                     creditsRequired,
                     customerTrust: {
-                        firstName: item.customer.user.firstName,
-                        jobsPostedCount: item.customer.jobsPostedCount,
-                        jobsCompletedCount: item.customer.jobsCompletedCount,
-                        memberSince: item.customer.user.createdAt,
-                        trustScore: item.customer.trustScore,
+                        firstName: item.customer?.user?.firstName || 'Customer',
+                        jobsPostedCount: item.customer?.jobsPostedCount || 0,
+                        jobsCompletedCount: item.customer?.jobsCompletedCount || 0,
+                        memberSince: item.customer?.user?.createdAt || item.createdAt,
+                        trustScore: item.customer?.trustScore || 100,
                     },
                 };
             }));
@@ -401,11 +405,11 @@ class RequirementsController {
                     maximumBudget: requirement.budgetMax,
                     creditsRequired,
                     customerTrust: {
-                        firstName: requirement.customer.user.firstName,
-                        jobsPostedCount: requirement.customer.jobsPostedCount,
-                        jobsCompletedCount: requirement.customer.jobsCompletedCount,
-                        memberSince: requirement.customer.user.createdAt,
-                        trustScore: requirement.customer.trustScore,
+                        firstName: requirement.customer?.user?.firstName || 'Customer',
+                        jobsPostedCount: requirement.customer?.jobsPostedCount || 0,
+                        jobsCompletedCount: requirement.customer?.jobsCompletedCount || 0,
+                        memberSince: requirement.customer?.user?.createdAt || requirement.createdAt,
+                        trustScore: requirement.customer?.trustScore || 100,
                     },
                 },
             });
