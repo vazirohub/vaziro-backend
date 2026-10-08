@@ -10,7 +10,8 @@ router.use(authenticate, requireRoles('ADMIN', 'SUPER_ADMIN'));
 // Platform Metrics
 router.get('/metrics', AdminController.getMetrics);
 
-// Users & Credits Full Control
+// Users & Credits Full Control (Bulk Actions & Single Controls)
+router.post('/users/bulk-action', AdminController.bulkUsersAction);
 router.get('/users', AdminController.getUsers);
 router.put('/users/:id', AdminController.updateUser);
 router.delete('/users/:id', AdminController.deleteUser);
@@ -18,13 +19,16 @@ router.patch('/users/:id/status', AdminController.updateUserStatus);
 router.post('/users/:id/credits', AdminController.adjustUserCredits);
 router.post('/users/:id/reset-password', AdminController.resetUserPassword);
 
-// Marketplace Requirements & Jobs Control
+// Marketplace Requirements & Jobs Control (Bulk Actions & Single Controls)
+router.post('/requirements/bulk-action', AdminController.bulkRequirementsAction);
 router.get('/requirements', AdminController.getRequirements);
 router.patch('/requirements/:id/status', AdminController.updateRequirementStatus);
+router.post('/jobs/bulk-action', AdminController.bulkJobsAction);
 router.get('/jobs', AdminController.getJobs);
 router.patch('/jobs/:id/status', AdminController.updateJobStatus);
 
-// Verifications, Settings & Locations
+// Verifications, Settings & Locations (Bulk Actions & Single Controls)
+router.post('/verifications/bulk-action', AdminController.bulkVerificationsAction);
 router.get('/verifications', AdminController.getVerifications);
 router.get('/verifications/:id', AdminController.getVerificationById);
 router.post('/verifications/:id/review', AdminController.markForReview);
@@ -58,7 +62,8 @@ router.get('/credits/batches', AdminController.getCreditBatches);
 router.get('/credits/ledger', AdminController.getCreditLedger);
 router.post('/credits/process-expired', AdminController.triggerBatchExpiry);
 
-// Communication Moderation & Reports
+// Communication Moderation & Reports (Bulk Actions & Single Controls)
+router.post('/reports/bulk-action', AdminController.bulkReportsAction);
 router.get('/reports', AdminController.getReports);
 router.get('/reports/:id', AdminController.getReportById);
 router.post('/reports/:id/resolve', AdminController.resolveReport);

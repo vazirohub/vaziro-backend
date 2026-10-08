@@ -1276,5 +1276,299 @@ class AdminController {
             return res.status(400).json({ success: false, error: { message: error.message || 'Failed to resolve report' } });
         }
     }
+    // ============================================================================
+    // MULTI-SELECT BULK ACTIONS (DELETE, APPROVE, VERIFY, STATUS CHANGE)
+    // ============================================================================
+    /**
+     * POST /api/v1/admin/users/bulk-action
+     * Multi-select batch operations: DELETE, STATUS_UPDATE, VERIFY
+     */
+    static async bulkUsersAction(req, res) {
+        try {
+            const { userIds, action, status } = req.body;
+            const adminId = req.user?.id;
+            if (!Array.isArray(userIds) || userIds.length === 0) {
+                return res.status(400).json({ success: false, error: { message: 'userIds array is required' } });
+            }
+            // Filter out admin's own ID for safety
+            const targetIds = userIds.filter((id) => id !== adminId);
+            let affectedCount = 0;
+            if (action === 'DELETE') {
+                for (const id of targetIds) {
+                    try {
+                        await prisma_1.prisma.userRole.deleteMany({ where: { userId: id } }).catch(() => { });
+                        await prisma_1.prisma.refreshToken.deleteMany({ where: { userId: id } }).catch(() => { });
+                        await prisma_1.prisma.notification.deleteMany({ where: { userId: id } }).catch(() => { });
+                        await prisma_1.prisma.user.delete({ where: { id } });
+                        affectedCount++;
+                    }
+                    catch {
+                        await prisma_1.prisma.user.update({
+                            where: { id },
+                            data: { status: 'DELETED', deletedAt: new Date() },
+                        }).catch(() => { });
+                        affectedCount++;
+                    }
+                }
+            }
+            else if (action === 'STATUS_UPDATE') {
+                const validStatus = ['ACTIVE', 'SUSPENDED', 'INACTIVE'].includes(status) ? status : 'ACTIVE';
+                const result = await prisma_1.prisma.user.updateMany({
+                    where: { id: { in: targetIds } },
+                    data: { status: validStatus },
+                });
+                affectedCount = result.count;
+            }
+            else if (action === 'VERIFY') {
+                const profs = await prisma_1.prisma.professionalProfile.findMany({
+                    where: { userId: { in: targetIds } },
+                    select: { id: true },
+                });
+                const profIds = profs.map((p) => p.id);
+                if (profIds.length > 0) {
+                    await prisma_1.prisma.professionalProfile.updateMany({
+                        where: { id: { in: profIds } },
+                        data: { isVerified: true },
+                    });
+                    await prisma_1.prisma.verification.updateMany({
+                        where: { professionalProfileId: { in: profIds } },
+                        data: { status: 'VERIFIED', verifiedAt: new Date() },
+                    });
+                }
+                affectedCount = profIds.length;
+            }
+            else {
+                return res.status(400).json({ success: false, error: { message: `Unknown action: ${action}` } });
+            }
+            return res.status(200).json({
+                success: true,
+                message: `Bulk ${action} executed successfully on ${affectedCount} users.`,
+                data: { affectedCount },
+            });
+        }
+        catch (error) {
+            return res.status(500).json({
+                success: false,
+                error: { message: error.message || 'Failed to execute bulk user action' },
+            });
+        }
+    }
+    /**
+     * POST /api/v1/admin/verifications/bulk-action
+     * Multi-select batch operations: APPROVE, REJECT, RESET, DELETE
+     */
+    static async bulkVerificationsAction(req, res) {
+        try {
+            const { verificationIds, action, rejectionReason } = req.body;
+            if (!Array.isArray(verificationIds) || verificationIds.length === 0) {
+                return res.status(400).json({ success: false, error: { message: 'verificationIds array is required' } });
+            }
+            let affectedCount = 0;
+            if (action === 'APPROVE') {
+                for (const id of verificationIds) {
+                    const ver = await prisma_1.prisma.verification.findUnique({
+                        where: { id },
+                        select: { id: true, professionalProfileId: true },
+                    });
+                    if (ver) {
+                        await prisma_1.prisma.verification.update({
+                            where: { id },
+                            data: {
+                                status: 'VERIFIED',
+                                verifiedAt: new Date(),
+                                rejectionReason: null,
+                            },
+                        });
+                        if (ver.professionalProfileId) {
+                            await prisma_1.prisma.professionalProfile.update({
+                                where: { id: ver.professionalProfileId },
+                                data: { isVerified: true },
+                            });
+                        }
+                        affectedCount++;
+                    }
+                }
+            }
+            else if (action === 'REJECT') {
+                for (const id of verificationIds) {
+                    const ver = await prisma_1.prisma.verification.findUnique({
+                        where: { id },
+                        select: { id: true, professionalProfileId: true },
+                    });
+                    if (ver) {
+                        await prisma_1.prisma.verification.update({
+                            where: { id },
+                            data: {
+                                status: 'REJECTED',
+                                rejectionReason: rejectionReason || 'Bulk rejected by administrator',
+                            },
+                        });
+                        if (ver.professionalProfileId) {
+                            await prisma_1.prisma.professionalProfile.update({
+                                where: { id: ver.professionalProfileId },
+                                data: { isVerified: false },
+                            });
+                        }
+                        affectedCount++;
+                    }
+                }
+            }
+            else if (action === 'RESET') {
+                const result = await prisma_1.prisma.verification.updateMany({
+                    where: { id: { in: verificationIds } },
+                    data: { status: 'PENDING', rejectionReason: null },
+                });
+                affectedCount = result.count;
+            }
+            else if (action === 'DELETE') {
+                const result = await prisma_1.prisma.verification.deleteMany({
+                    where: { id: { in: verificationIds } },
+                });
+                affectedCount = result.count;
+            }
+            else {
+                return res.status(400).json({ success: false, error: { message: `Unknown action: ${action}` } });
+            }
+            return res.status(200).json({
+                success: true,
+                message: `Bulk ${action} executed successfully on ${affectedCount} verifications.`,
+                data: { affectedCount },
+            });
+        }
+        catch (error) {
+            return res.status(500).json({
+                success: false,
+                error: { message: error.message || 'Failed to execute bulk verification action' },
+            });
+        }
+    }
+    /**
+     * POST /api/v1/admin/requirements/bulk-action
+     * Multi-select batch operations: STATUS_UPDATE, DELETE
+     */
+    static async bulkRequirementsAction(req, res) {
+        try {
+            const { requirementIds, action, status } = req.body;
+            if (!Array.isArray(requirementIds) || requirementIds.length === 0) {
+                return res.status(400).json({ success: false, error: { message: 'requirementIds array is required' } });
+            }
+            let affectedCount = 0;
+            if (action === 'STATUS_UPDATE') {
+                const validStatus = ['OPEN', 'IN_PROGRESS', 'CLOSED', 'CANCELLED', 'COMPLETED'].includes(status)
+                    ? status
+                    : 'CLOSED';
+                const result = await prisma_1.prisma.requirement.updateMany({
+                    where: { id: { in: requirementIds } },
+                    data: { status: validStatus },
+                });
+                affectedCount = result.count;
+            }
+            else if (action === 'DELETE') {
+                for (const id of requirementIds) {
+                    await prisma_1.prisma.quotation.deleteMany({ where: { requirementId: id } }).catch(() => { });
+                    await prisma_1.prisma.requirement.delete({ where: { id } }).catch(() => { });
+                    affectedCount++;
+                }
+            }
+            else {
+                return res.status(400).json({ success: false, error: { message: `Unknown action: ${action}` } });
+            }
+            return res.status(200).json({
+                success: true,
+                message: `Bulk ${action} executed successfully on ${affectedCount} requirements.`,
+                data: { affectedCount },
+            });
+        }
+        catch (error) {
+            return res.status(500).json({
+                success: false,
+                error: { message: error.message || 'Failed to execute bulk requirement action' },
+            });
+        }
+    }
+    /**
+     * POST /api/v1/admin/jobs/bulk-action
+     * Multi-select batch operations: STATUS_UPDATE, DELETE
+     */
+    static async bulkJobsAction(req, res) {
+        try {
+            const { jobIds, action, status } = req.body;
+            if (!Array.isArray(jobIds) || jobIds.length === 0) {
+                return res.status(400).json({ success: false, error: { message: 'jobIds array is required' } });
+            }
+            let affectedCount = 0;
+            if (action === 'STATUS_UPDATE') {
+                const result = await prisma_1.prisma.job.updateMany({
+                    where: { id: { in: jobIds } },
+                    data: { status },
+                });
+                affectedCount = result.count;
+            }
+            else if (action === 'DELETE') {
+                const result = await prisma_1.prisma.job.deleteMany({
+                    where: { id: { in: jobIds } },
+                });
+                affectedCount = result.count;
+            }
+            else {
+                return res.status(400).json({ success: false, error: { message: `Unknown action: ${action}` } });
+            }
+            return res.status(200).json({
+                success: true,
+                message: `Bulk ${action} executed successfully on ${affectedCount} jobs.`,
+                data: { affectedCount },
+            });
+        }
+        catch (error) {
+            return res.status(500).json({
+                success: false,
+                error: { message: error.message || 'Failed to execute bulk job action' },
+            });
+        }
+    }
+    /**
+     * POST /api/v1/admin/reports/bulk-action
+     * Multi-select batch operations: RESOLVE, DISMISS, DELETE
+     */
+    static async bulkReportsAction(req, res) {
+        try {
+            const { reportIds, action, adminNotes } = req.body;
+            if (!Array.isArray(reportIds) || reportIds.length === 0) {
+                return res.status(400).json({ success: false, error: { message: 'reportIds array is required' } });
+            }
+            let affectedCount = 0;
+            if (action === 'RESOLVE' || action === 'DISMISS') {
+                const newStatus = action === 'RESOLVE' ? 'RESOLVED' : 'DISMISSED';
+                const result = await prisma_1.prisma.conversationReport.updateMany({
+                    where: { id: { in: reportIds } },
+                    data: {
+                        status: newStatus,
+                        adminNotes: adminNotes || `Bulk ${action.toLowerCase()}d by administrator`,
+                    },
+                });
+                affectedCount = result.count;
+            }
+            else if (action === 'DELETE') {
+                const result = await prisma_1.prisma.conversationReport.deleteMany({
+                    where: { id: { in: reportIds } },
+                });
+                affectedCount = result.count;
+            }
+            else {
+                return res.status(400).json({ success: false, error: { message: `Unknown action: ${action}` } });
+            }
+            return res.status(200).json({
+                success: true,
+                message: `Bulk ${action} executed successfully on ${affectedCount} reports.`,
+                data: { affectedCount },
+            });
+        }
+        catch (error) {
+            return res.status(500).json({
+                success: false,
+                error: { message: error.message || 'Failed to execute bulk report action' },
+            });
+        }
+    }
 }
 exports.AdminController = AdminController;
