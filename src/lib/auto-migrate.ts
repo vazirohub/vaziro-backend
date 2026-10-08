@@ -51,6 +51,18 @@ export async function ensureDatabaseSchema(): Promise<void> {
       ).catch(() => {});
     }
 
+    // Check existing columns for User table
+    const userCols = await withTimeout(
+      prisma.$queryRawUnsafe<Array<{ name: string }>>(`PRAGMA table_info(User)`)
+    ).catch(() => []);
+    const userColNames = new Set((userCols || []).map((c: any) => c.name?.toLowerCase()));
+    if (!userColNames.has('emailverifiedat')) {
+      await withTimeout(prisma.$executeRawUnsafe(`ALTER TABLE User ADD COLUMN emailVerifiedAt DATETIME`)).catch(() => {});
+    }
+    if (!userColNames.has('phoneverifiedat')) {
+      await withTimeout(prisma.$executeRawUnsafe(`ALTER TABLE User ADD COLUMN phoneVerifiedAt DATETIME`)).catch(() => {});
+    }
+
     // Check existing columns for Payment
     const paymentCols = await withTimeout(
       prisma.$queryRawUnsafe<Array<{ name: string }>>(`PRAGMA table_info(Payment)`)

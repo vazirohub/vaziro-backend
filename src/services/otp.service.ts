@@ -2,14 +2,15 @@ import crypto from 'crypto';
 import { prisma } from '../lib/prisma';
 import { config } from '../config';
 import { Msg91Service } from './msg91.service';
+import { NotificationService } from './notification.service';
 import { ensureDatabaseSchema } from '../lib/auto-migrate';
 
 export class OtpService {
-  private static hashOtp(otp: string, phone: string): string {
+  private static hashOtp(otp: string, identifier: string): string {
     const salt = config.jwt.secret;
     return crypto
       .createHmac('sha256', salt)
-      .update(`${phone}:${otp}`)
+      .update(`${identifier}:${otp}`)
       .digest('hex');
   }
 
@@ -18,11 +19,15 @@ export class OtpService {
     return crypto.randomInt(100000, 999999).toString();
   }
 
+  // ============================================================================
+  // 1. MOBILE PHONE OTP DISPATCH & VERIFICATION
+  // ============================================================================
+
   static async requestOtp(
     phone: string,
     purpose: string = 'login',
     options?: { widgetDispatched?: boolean }
-  ): Promise<{ success: boolean; message: string; cooldownSeconds: number }> {
+  ): Promise<{ success: boolean; message: string; cooldownSeconds: number; devOtp?: string }> {
     await ensureDatabaseSchema().catch(() => {});
 
     const { canonical, isValid } = Msg91Service.normalizeIndianMobile(phone);
@@ -72,6 +77,7 @@ export class OtpService {
       await prisma.otpVerification.create({
         data: {
           phone: canonical,
+          identifier: canonical,
           otpHash: 'MSG91_WIDGET_DISPATCHED',
           purpose,
           expiresAt: new Date(Date.now() + config.otp.expirySeconds * 1000),
@@ -95,6 +101,7 @@ export class OtpService {
     await prisma.otpVerification.create({
       data: {
         phone: canonical,
+        identifier: canonical,
         otpHash,
         purpose,
         expiresAt,
@@ -102,16 +109,24 @@ export class OtpService {
       },
     });
 
+    const isNonProd = process.env.NODE_ENV !== 'production';
+    console.log(`🔑 [OTP] Mobile: ${canonical} | Generated OTP: ${otpCode} | Purpose: ${purpose}`);
+
     // Send OTP via MSG91 server-side API (no secrets exposed to client)
     const msg91Res = await Msg91Service.sendOtp(canonical, otpCode);
     if (!msg91Res.success) {
-      throw new Error(msg91Res.message || "We couldn't send the OTP right now. Please try again in a moment.");
+      console.warn(`[OTP] MSG91 SMS dispatch notice: ${msg91Res.message}`);
+      // In development / sandbox mode, do not throw so testing can proceed smoothly
+      if (!isNonProd) {
+        throw new Error(msg91Res.message || "We couldn't deliver the SMS right now. Please try via Email OTP or try again.");
+      }
     }
 
     return {
       success: true,
-      message: 'OTP dispatched successfully.',
+      message: 'OTP dispatched successfully to your mobile number.',
       cooldownSeconds: config.otp.resendCooldownSeconds,
+      ...(isNonProd ? { devOtp: otpCode } : {}),
     };
   }
 
@@ -119,7 +134,7 @@ export class OtpService {
     phone: string,
     purpose: string = 'resend',
     options?: { widgetDispatched?: boolean }
-  ): Promise<{ success: boolean; message: string; cooldownSeconds: number }> {
+  ): Promise<{ success: boolean; message: string; cooldownSeconds: number; devOtp?: string }> {
     return this.requestOtp(phone, purpose, options);
   }
 
@@ -157,7 +172,7 @@ export class OtpService {
     let isValidHash = inputHash === record.otpHash;
 
     // Development / test-only bypass (strictly disabled in production)
-    if (!isValidHash && process.env.NODE_ENV === 'test' && otpCode === '123456') {
+    if (!isValidHash && (process.env.NODE_ENV === 'test' || process.env.NODE_ENV === 'development') && otpCode === '123456') {
       isValidHash = true;
     }
 
@@ -175,6 +190,178 @@ export class OtpService {
         throw new Error('Too many incorrect attempts. Please request a new OTP.');
       }
       throw new Error('The OTP is incorrect. Please check and try again.');
+    }
+
+    // Mark as successfully verified & used
+    await prisma.otpVerification.update({
+      where: { id: record.id },
+      data: {
+        isUsed: true,
+        verifiedAt: new Date(),
+      },
+    });
+
+    return true;
+  }
+
+  // ============================================================================
+  // 2. EMAIL OTP DISPATCH & VERIFICATION (NEW!)
+  // ============================================================================
+
+  static async requestEmailOtp(
+    email: string,
+    purpose: string = 'verification',
+    userName?: string
+  ): Promise<{ success: boolean; message: string; cooldownSeconds: number; devOtp?: string }> {
+    await ensureDatabaseSchema().catch(() => {});
+
+    const canonicalEmail = (email || '').trim().toLowerCase();
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!canonicalEmail || !emailRegex.test(canonicalEmail)) {
+      throw new Error('Please enter a valid email address.');
+    }
+
+    // Check rate limit (max 5 requests per 15 minutes per email)
+    const fifteenMinutesAgo = new Date(Date.now() - config.otp.rateLimitWindowMinutes * 60 * 1000);
+    const recentRequestsCount = await prisma.otpVerification.count({
+      where: {
+        email: canonicalEmail,
+        createdAt: { gte: fifteenMinutesAgo },
+      },
+    });
+
+    if (recentRequestsCount >= config.otp.rateLimitMaxRequests) {
+      throw new Error('Too many OTP requests for this email. Please wait a few minutes before trying again.');
+    }
+
+    // Check resend cooldown (30 seconds)
+    const latestOtp = await prisma.otpVerification.findFirst({
+      where: { email: canonicalEmail },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    if (latestOtp) {
+      const elapsedSeconds = (Date.now() - latestOtp.createdAt.getTime()) / 1000;
+      if (elapsedSeconds < config.otp.resendCooldownSeconds) {
+        const remaining = Math.ceil(config.otp.resendCooldownSeconds - elapsedSeconds);
+        return {
+          success: false,
+          message: `Please wait ${remaining} seconds before requesting a new OTP.`,
+          cooldownSeconds: remaining,
+        };
+      }
+    }
+
+    // Invalidate previous unused OTPs for this email
+    await prisma.otpVerification.updateMany({
+      where: { email: canonicalEmail, isUsed: false },
+      data: { isUsed: true },
+    });
+
+    const otpCode = this.generateOtpCode();
+    const otpHash = this.hashOtp(otpCode, canonicalEmail);
+    const expiresAt = new Date(Date.now() + config.otp.expirySeconds * 1000);
+
+    // Save OTP record
+    await prisma.otpVerification.create({
+      data: {
+        email: canonicalEmail,
+        identifier: canonicalEmail,
+        otpHash,
+        purpose,
+        expiresAt,
+        maxAttempts: config.otp.maxAttempts,
+      },
+    });
+
+    const isNonProd = process.env.NODE_ENV !== 'production';
+    console.log(`✉️ [OTP] Email: ${canonicalEmail} | Generated OTP: ${otpCode} | Purpose: ${purpose}`);
+
+    // Generate executive HTML email template
+    const html = NotificationService.generateEmailTemplate({
+      title: 'Your Vaziro Email Verification Code',
+      userName: userName || 'Member',
+      badge: 'EMAIL SECURITY VERIFICATION',
+      message: 'Please use the 6-digit verification code below to confirm your email address and secure your Vaziro account:',
+      highlightCode: otpCode,
+      subNote: '🔒 Security Notice: This code is valid for 15 minutes. Never share this code or your password with anyone. Vaziro staff will never ask for your OTP.',
+    });
+
+    // Send email via Resend
+    const resendRes = await NotificationService.sendEmailViaResend({
+      to: canonicalEmail,
+      subject: `${otpCode} is your Vaziro email verification code`,
+      html,
+    });
+
+    if (!resendRes.success) {
+      console.warn(`[OTP] Email dispatch warning: ${resendRes.error}`);
+      if (!isNonProd) {
+        throw new Error('Failed to dispatch email. Please check your email address and try again.');
+      }
+    }
+
+    return {
+      success: true,
+      message: `Verification code sent to ${canonicalEmail}. Please check your inbox.`,
+      cooldownSeconds: config.otp.resendCooldownSeconds,
+      ...(isNonProd ? { devOtp: otpCode } : {}),
+    };
+  }
+
+  static async verifyEmailOtp(email: string, otpCode: string, purpose: string = 'verification'): Promise<boolean> {
+    await ensureDatabaseSchema().catch(() => {});
+
+    const canonicalEmail = (email || '').trim().toLowerCase();
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!canonicalEmail || !emailRegex.test(canonicalEmail)) {
+      throw new Error('Please enter a valid email address.');
+    }
+
+    const record = await prisma.otpVerification.findFirst({
+      where: {
+        email: canonicalEmail,
+        isUsed: false,
+        expiresAt: { gt: new Date() },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    if (!record) {
+      throw new Error('This verification code has expired. Please request a new code.');
+    }
+
+    if (record.attempts >= record.maxAttempts) {
+      await prisma.otpVerification.update({
+        where: { id: record.id },
+        data: { isUsed: true },
+      });
+      throw new Error('Too many incorrect attempts. Please request a new code.');
+    }
+
+    // Verify hash
+    const inputHash = this.hashOtp(otpCode, canonicalEmail);
+    let isValidHash = inputHash === record.otpHash;
+
+    // Development / test-only bypass (strictly disabled in production)
+    if (!isValidHash && (process.env.NODE_ENV === 'test' || process.env.NODE_ENV === 'development') && otpCode === '123456') {
+      isValidHash = true;
+    }
+
+    if (!isValidHash) {
+      const newAttempts = record.attempts + 1;
+      await prisma.otpVerification.update({
+        where: { id: record.id },
+        data: {
+          attempts: newAttempts,
+          ...(newAttempts >= record.maxAttempts ? { isUsed: true } : {}),
+        },
+      });
+
+      if (newAttempts >= record.maxAttempts) {
+        throw new Error('Too many incorrect attempts. Please request a new code.');
+      }
+      throw new Error('The verification code is incorrect. Please check and try again.');
     }
 
     // Mark as successfully verified & used

@@ -40,6 +40,15 @@ async function ensureDatabaseSchema() {
         if (!otpColNames.has('verifiedat')) {
             await withTimeout(prisma_1.prisma.$executeRawUnsafe(`ALTER TABLE OtpVerification ADD COLUMN verifiedAt DATETIME`)).catch(() => { });
         }
+        // Check existing columns for User table
+        const userCols = await withTimeout(prisma_1.prisma.$queryRawUnsafe(`PRAGMA table_info(User)`)).catch(() => []);
+        const userColNames = new Set((userCols || []).map((c) => c.name?.toLowerCase()));
+        if (!userColNames.has('emailverifiedat')) {
+            await withTimeout(prisma_1.prisma.$executeRawUnsafe(`ALTER TABLE User ADD COLUMN emailVerifiedAt DATETIME`)).catch(() => { });
+        }
+        if (!userColNames.has('phoneverifiedat')) {
+            await withTimeout(prisma_1.prisma.$executeRawUnsafe(`ALTER TABLE User ADD COLUMN phoneVerifiedAt DATETIME`)).catch(() => { });
+        }
         // Check existing columns for Payment
         const paymentCols = await withTimeout(prisma_1.prisma.$queryRawUnsafe(`PRAGMA table_info(Payment)`)).catch(() => []);
         const paymentColNames = new Set((paymentCols || []).map((c) => c.name?.toLowerCase()));

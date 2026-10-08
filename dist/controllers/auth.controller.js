@@ -4,6 +4,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.AuthController = void 0;
+exports.formatUserResponse = formatUserResponse;
 const zod_1 = require("zod");
 const bcryptjs_1 = __importDefault(require("bcryptjs"));
 const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
@@ -88,6 +89,35 @@ const registerSchema = zod_1.z.object({
     email: zod_1.z.string({ required_error: 'Email is required.' }).email('Please provide a valid email address.').min(5, 'Email is required.'),
     password: zod_1.z.string().min(6, 'Password must be at least 6 characters.'),
     role: zod_1.z.enum(['CUSTOMER', 'PROFESSIONAL']).default('CUSTOMER'),
+    verificationChannel: zod_1.z.enum(['EMAIL', 'MOBILE', 'PHONE']).optional(),
+    otpCode: zod_1.z.string().optional(),
+    signupToken: zod_1.z.string().optional(),
+});
+const sendEmailOtpSchema = zod_1.z.object({
+    email: zod_1.z.string().email('Please provide a valid email address.'),
+    purpose: zod_1.z.string().default('verification'),
+    name: zod_1.z.string().optional(),
+});
+const verifyEmailOtpSchema = zod_1.z.object({
+    email: zod_1.z.string().email('Please provide a valid email address.'),
+    otp: zod_1.z.string().min(4, 'Verification code must be at least 4 digits.').max(8),
+    purpose: zod_1.z.string().default('verification'),
+});
+const profileSendEmailSchema = zod_1.z.object({
+    email: zod_1.z.string().email('Please provide a valid email address.').optional(),
+});
+const profileVerifyEmailSchema = zod_1.z.object({
+    email: zod_1.z.string().email('Please provide a valid email address.').optional(),
+    otp: zod_1.z.string().min(4, 'Verification code must be at least 4 digits.').max(8),
+});
+const profileSendMobileSchema = zod_1.z.object({
+    mobile: zod_1.z.string().optional(),
+    phone: zod_1.z.string().optional(),
+});
+const profileVerifyMobileSchema = zod_1.z.object({
+    mobile: zod_1.z.string().optional(),
+    phone: zod_1.z.string().optional(),
+    otp: zod_1.z.string().min(4, 'Verification code must be at least 4 digits.').max(8),
 });
 const forgotPasswordSchema = zod_1.z.object({
     identifier: zod_1.z.string().min(3, 'Email or mobile number is required.'),
@@ -104,6 +134,27 @@ const resetPasswordSchema = zod_1.z.object({
 }).refine((data) => Boolean(data.code || data.resetToken), {
     message: 'Verification code or reset token is required.',
 });
+function formatUserResponse(user) {
+    if (!user)
+        return null;
+    const roles = Array.isArray(user.roles)
+        ? user.roles.map((r) => (r.role ? r.role.name : typeof r === 'string' ? r : r.name))
+        : [];
+    return {
+        id: user.id,
+        phone: user.phone,
+        email: user.email,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        roles,
+        emailVerifiedAt: user.emailVerifiedAt || null,
+        phoneVerifiedAt: user.phoneVerifiedAt || null,
+        isEmailVerified: Boolean(user.emailVerifiedAt),
+        isPhoneVerified: Boolean(user.phoneVerifiedAt),
+        customerProfile: user.customerProfile || null,
+        professionalProfile: user.professionalProfile || null,
+    };
+}
 class AuthController {
     /**
      * Check if a mobile number is already registered in Vaziro
@@ -148,6 +199,8 @@ class AuthController {
                 exists: Boolean(user),
                 mobile: canonical,
                 role: user ? primaryRole : undefined,
+                isPhoneVerified: Boolean(user?.phoneVerifiedAt),
+                isEmailVerified: Boolean(user?.emailVerifiedAt),
                 message: user ? 'Account found.' : 'No account found with this mobile number.',
             });
         }
@@ -355,16 +408,7 @@ class AuthController {
                         accessToken,
                         refreshToken,
                         isNewUser: false,
-                        user: {
-                            id: user.id,
-                            phone: user.phone,
-                            email: user.email,
-                            firstName: user.firstName,
-                            lastName: user.lastName,
-                            roles: user.roles.map((r) => r.role.name),
-                            customerProfile: user.customerProfile,
-                            professionalProfile: user.professionalProfile,
-                        },
+                        user: formatUserResponse(user),
                     },
                 });
             }
@@ -428,16 +472,7 @@ class AuthController {
                         accessToken,
                         refreshToken,
                         isNewUser: true,
-                        user: {
-                            id: user.id,
-                            phone: user.phone,
-                            email: user.email,
-                            firstName: user.firstName,
-                            lastName: user.lastName,
-                            roles: user.roles.map((r) => r.role.name),
-                            customerProfile: user.customerProfile,
-                            professionalProfile: user.professionalProfile,
-                        },
+                        user: formatUserResponse(user),
                     },
                 });
             }
@@ -554,16 +589,7 @@ class AuthController {
                         accessToken,
                         refreshToken,
                         isNewUser: false,
-                        user: {
-                            id: existing.id,
-                            phone: existing.phone,
-                            email: existing.email,
-                            firstName: existing.firstName,
-                            lastName: existing.lastName,
-                            roles: existing.roles.map((r) => r.role.name),
-                            customerProfile: existing.customerProfile,
-                            professionalProfile: existing.professionalProfile,
-                        },
+                        user: formatUserResponse(existing),
                     },
                 });
             }
@@ -637,16 +663,7 @@ class AuthController {
                     accessToken,
                     refreshToken,
                     isNewUser: true,
-                    user: {
-                        id: user.id,
-                        phone: user.phone,
-                        email: user.email,
-                        firstName: user.firstName,
-                        lastName: user.lastName,
-                        roles: user.roles.map((r) => r.role.name),
-                        customerProfile: user.customerProfile,
-                        professionalProfile: user.professionalProfile,
-                    },
+                    user: formatUserResponse(user),
                 },
             });
         }
@@ -767,16 +784,7 @@ class AuthController {
                 data: {
                     accessToken,
                     refreshToken,
-                    user: {
-                        id: user.id,
-                        email: user.email,
-                        phone: user.phone,
-                        firstName: user.firstName,
-                        lastName: user.lastName,
-                        roles: user.roles.map((r) => r.role.name),
-                        customerProfile: user.customerProfile,
-                        professionalProfile: user.professionalProfile,
-                    },
+                    user: formatUserResponse(user),
                 },
             });
         }
@@ -786,17 +794,18 @@ class AuthController {
     }
     static async register(req, res, next) {
         try {
-            const { name, phone, email, password, role } = registerSchema.parse(req.body);
+            const { name, phone, email, password, role, verificationChannel, otpCode, signupToken } = registerSchema.parse(req.body);
             const cleanDigits = phone.replace(/\D/g, '');
             const last10 = cleanDigits.slice(-10);
             const formattedPhone = last10.length === 10 ? `+91${last10}` : phone.trim();
+            const canonicalEmail = email.toLowerCase().trim();
             // Check if user already exists
             const existingUser = await prisma_1.prisma.user.findFirst({
                 where: {
                     OR: [
                         { phone: formattedPhone },
                         ...(last10.length === 10 ? [{ phone: last10 }, { phone: `91${last10}` }] : []),
-                        ...(email ? [{ email: email.toLowerCase().trim() }] : []),
+                        { email: canonicalEmail },
                     ],
                 },
             });
@@ -806,6 +815,111 @@ class AuthController {
                     error: {
                         code: 'USER_EXISTS',
                         message: 'An account with this mobile number or email already exists. Please log in.',
+                    },
+                });
+            }
+            // -------------------------------------------------------------
+            // MANDATORY VERIFICATION AT SIGN UP (EMAIL OR MOBILE)
+            // -------------------------------------------------------------
+            let isEmailVerifiedAtSignup = false;
+            let isPhoneVerifiedAtSignup = false;
+            const fifteenMinutesAgo = new Date(Date.now() - 15 * 60 * 1000);
+            // Path A: Inline verification with OTP code provided directly in register payload
+            if (otpCode && (verificationChannel === 'EMAIL' || (!verificationChannel && otpCode))) {
+                try {
+                    await otp_service_1.OtpService.verifyEmailOtp(canonicalEmail, otpCode, 'signup');
+                    isEmailVerifiedAtSignup = true;
+                }
+                catch (emailErr) {
+                    if (verificationChannel === 'EMAIL') {
+                        return res.status(400).json({
+                            success: false,
+                            error: {
+                                code: 'INVALID_OTP',
+                                message: emailErr.message || 'Invalid or expired email verification code.',
+                            },
+                        });
+                    }
+                    // If no channel was specified, fallback and test mobile OTP
+                    try {
+                        await otp_service_1.OtpService.verifyOtp(formattedPhone, otpCode, 'signup');
+                        isPhoneVerifiedAtSignup = true;
+                    }
+                    catch (phoneErr) {
+                        return res.status(400).json({
+                            success: false,
+                            error: {
+                                code: 'INVALID_OTP',
+                                message: 'Invalid verification code. Please check the code sent to your email or mobile.',
+                            },
+                        });
+                    }
+                }
+            }
+            else if (otpCode && (verificationChannel === 'MOBILE' || verificationChannel === 'PHONE')) {
+                try {
+                    await otp_service_1.OtpService.verifyOtp(formattedPhone, otpCode, 'signup');
+                    isPhoneVerifiedAtSignup = true;
+                }
+                catch (phoneErr) {
+                    return res.status(400).json({
+                        success: false,
+                        error: {
+                            code: 'INVALID_OTP',
+                            message: phoneErr.message || 'Invalid or expired mobile verification code.',
+                        },
+                    });
+                }
+            }
+            // Path B: Valid JWT signup token (from existing mobile OTP flow)
+            if (!isEmailVerifiedAtSignup && !isPhoneVerifiedAtSignup && signupToken) {
+                try {
+                    const decoded = jsonwebtoken_1.default.verify(signupToken, config_1.config.jwt.secret);
+                    if (decoded.phone) {
+                        isPhoneVerifiedAtSignup = true;
+                    }
+                    else if (decoded.email) {
+                        isEmailVerifiedAtSignup = true;
+                    }
+                }
+                catch {
+                    // Invalid or expired signup token
+                }
+            }
+            // Path C: Pre-verified record in OtpVerification table within past 15 minutes
+            if (!isEmailVerifiedAtSignup && !isPhoneVerifiedAtSignup) {
+                const verifiedEmailRecord = await prisma_1.prisma.otpVerification.findFirst({
+                    where: {
+                        email: canonicalEmail,
+                        isUsed: true,
+                        verifiedAt: { gte: fifteenMinutesAgo },
+                    },
+                    orderBy: { verifiedAt: 'desc' },
+                });
+                if (verifiedEmailRecord) {
+                    isEmailVerifiedAtSignup = true;
+                }
+                else {
+                    const verifiedPhoneRecord = await prisma_1.prisma.otpVerification.findFirst({
+                        where: {
+                            phone: formattedPhone,
+                            isUsed: true,
+                            verifiedAt: { gte: fifteenMinutesAgo },
+                        },
+                        orderBy: { verifiedAt: 'desc' },
+                    });
+                    if (verifiedPhoneRecord) {
+                        isPhoneVerifiedAtSignup = true;
+                    }
+                }
+            }
+            // STRICT ENFORCEMENT: If neither email nor mobile is verified, reject registration
+            if (!isEmailVerifiedAtSignup && !isPhoneVerifiedAtSignup) {
+                return res.status(400).json({
+                    success: false,
+                    error: {
+                        code: 'VERIFICATION_REQUIRED',
+                        message: 'Verification required. Please verify your email address or mobile number via OTP to complete sign up.',
                     },
                 });
             }
@@ -822,10 +936,12 @@ class AuthController {
                 data: {
                     phone: formattedPhone,
                     phoneCountryCode: '+91',
-                    email: email ? email.toLowerCase().trim() : null,
+                    email: canonicalEmail,
                     firstName,
                     lastName,
                     passwordHash,
+                    emailVerifiedAt: isEmailVerifiedAtSignup ? new Date() : null,
+                    phoneVerifiedAt: isPhoneVerifiedAtSignup ? new Date() : null,
                     status: 'ACTIVE',
                     roles: dbRole ? { create: { roleId: dbRole.id } } : undefined,
                     ...(role === 'CUSTOMER'
@@ -875,20 +991,11 @@ class AuthController {
             }).catch(() => { });
             return res.status(201).json({
                 success: true,
-                message: 'Account registered successfully.',
+                message: 'Account registered and verified successfully.',
                 data: {
                     accessToken,
                     refreshToken,
-                    user: {
-                        id: user.id,
-                        email: user.email,
-                        phone: user.phone,
-                        firstName: user.firstName,
-                        lastName: user.lastName,
-                        roles: user.roles.map((r) => r.role.name),
-                        customerProfile: user.customerProfile,
-                        professionalProfile: user.professionalProfile,
-                    },
+                    user: formatUserResponse(user),
                 },
             });
         }
@@ -1201,16 +1308,7 @@ class AuthController {
             return res.status(200).json({
                 success: true,
                 data: {
-                    user: {
-                        id: user.id,
-                        email: user.email,
-                        phone: user.phone,
-                        firstName: user.firstName,
-                        lastName: user.lastName,
-                        roles: user.roles.map((r) => r.role.name),
-                        customerProfile: user.customerProfile,
-                        professionalProfile: user.professionalProfile,
-                    },
+                    user: formatUserResponse(user),
                 },
             });
         }
@@ -1272,16 +1370,7 @@ class AuthController {
                 success: true,
                 message: 'Profile updated successfully',
                 data: {
-                    user: {
-                        id: refreshed.id,
-                        email: refreshed.email,
-                        phone: refreshed.phone,
-                        firstName: refreshed.firstName,
-                        lastName: refreshed.lastName,
-                        roles: refreshed.roles.map((r) => r.role.name),
-                        customerProfile: refreshed.customerProfile,
-                        professionalProfile: refreshed.professionalProfile,
-                    },
+                    user: formatUserResponse(refreshed),
                 },
             });
         }
@@ -1379,6 +1468,280 @@ class AuthController {
         }
         catch (error) {
             next(error);
+        }
+    }
+    /**
+     * Send Email OTP for Email Verification (Public or Signup)
+     * POST /api/auth/send-email-otp
+     */
+    static async sendEmailOtp(req, res, next) {
+        try {
+            const parsed = sendEmailOtpSchema.parse(req.body);
+            const result = await otp_service_1.OtpService.requestEmailOtp(parsed.email, parsed.purpose, parsed.name);
+            return res.status(200).json({
+                success: true,
+                message: result.message,
+                data: {
+                    email: parsed.email.toLowerCase().trim(),
+                    cooldownSeconds: result.cooldownSeconds,
+                    devOtp: result.devOtp,
+                },
+            });
+        }
+        catch (error) {
+            if (error.message?.includes('Too many OTP requests')) {
+                return res.status(429).json({
+                    success: false,
+                    error: { code: 'RATE_LIMITED', message: error.message },
+                });
+            }
+            next(error);
+        }
+    }
+    /**
+     * Verify Email OTP (Public or Signup)
+     * POST /api/auth/verify-email-otp
+     */
+    static async verifyEmailOtp(req, res, next) {
+        try {
+            const parsed = verifyEmailOtpSchema.parse(req.body);
+            await otp_service_1.OtpService.verifyEmailOtp(parsed.email, parsed.otp, parsed.purpose);
+            return res.status(200).json({
+                success: true,
+                message: 'Email address verified successfully.',
+                data: {
+                    verified: true,
+                    email: parsed.email.toLowerCase().trim(),
+                },
+            });
+        }
+        catch (error) {
+            return res.status(400).json({
+                success: false,
+                error: {
+                    code: 'INVALID_OTP',
+                    message: error.message || 'Invalid or expired email verification code.',
+                },
+            });
+        }
+    }
+    /**
+     * Send Email OTP to Authenticated User for Profile Verification
+     * POST /api/auth/profile/send-email-otp
+     */
+    static async profileSendEmailOtp(req, res, next) {
+        try {
+            if (!req.user) {
+                return res.status(401).json({ success: false, error: { code: 'AUTH_REQUIRED', message: 'Authentication required' } });
+            }
+            const body = profileSendEmailSchema.parse(req.body || {});
+            const user = await prisma_1.prisma.user.findUnique({ where: { id: req.user.id } });
+            if (!user) {
+                return res.status(404).json({ success: false, error: { code: 'USER_NOT_FOUND', message: 'User not found' } });
+            }
+            const targetEmail = (body.email || user.email || '').toLowerCase().trim();
+            if (!targetEmail) {
+                return res.status(400).json({
+                    success: false,
+                    error: { code: 'EMAIL_REQUIRED', message: 'Please provide a valid email address to verify.' },
+                });
+            }
+            // If email is different from current user email, verify it's not already in use by someone else
+            if (targetEmail !== user.email?.toLowerCase().trim()) {
+                const existing = await prisma_1.prisma.user.findFirst({
+                    where: { email: targetEmail, id: { not: user.id } },
+                });
+                if (existing) {
+                    return res.status(409).json({
+                        success: false,
+                        error: { code: 'EMAIL_IN_USE', message: 'This email address is already associated with another account.' },
+                    });
+                }
+            }
+            const result = await otp_service_1.OtpService.requestEmailOtp(targetEmail, 'profile_verification', user.firstName);
+            return res.status(200).json({
+                success: true,
+                message: result.message,
+                data: {
+                    email: targetEmail,
+                    cooldownSeconds: result.cooldownSeconds,
+                    devOtp: result.devOtp,
+                },
+            });
+        }
+        catch (error) {
+            if (error.message?.includes('Too many OTP requests')) {
+                return res.status(429).json({ success: false, error: { code: 'RATE_LIMITED', message: error.message } });
+            }
+            next(error);
+        }
+    }
+    /**
+     * Verify Email OTP for Authenticated User Profile
+     * POST /api/auth/profile/verify-email-otp
+     */
+    static async profileVerifyEmailOtp(req, res, next) {
+        try {
+            if (!req.user) {
+                return res.status(401).json({ success: false, error: { code: 'AUTH_REQUIRED', message: 'Authentication required' } });
+            }
+            const body = profileVerifyEmailSchema.parse(req.body);
+            const user = await prisma_1.prisma.user.findUnique({
+                where: { id: req.user.id },
+                include: {
+                    roles: { include: { role: true } },
+                    customerProfile: true,
+                    professionalProfile: { include: { creditWallet: true, verification: true } },
+                },
+            });
+            if (!user) {
+                return res.status(404).json({ success: false, error: { code: 'USER_NOT_FOUND', message: 'User not found' } });
+            }
+            const targetEmail = (body.email || user.email || '').toLowerCase().trim();
+            if (!targetEmail) {
+                return res.status(400).json({
+                    success: false,
+                    error: { code: 'EMAIL_REQUIRED', message: 'Please provide a valid email address.' },
+                });
+            }
+            await otp_service_1.OtpService.verifyEmailOtp(targetEmail, body.otp, 'profile_verification');
+            const updated = await prisma_1.prisma.user.update({
+                where: { id: user.id },
+                data: {
+                    email: targetEmail,
+                    emailVerifiedAt: new Date(),
+                },
+                include: {
+                    roles: { include: { role: true } },
+                    customerProfile: true,
+                    professionalProfile: { include: { creditWallet: true, verification: true } },
+                },
+            });
+            return res.status(200).json({
+                success: true,
+                message: 'Email address verified successfully!',
+                data: {
+                    user: formatUserResponse(updated),
+                },
+            });
+        }
+        catch (error) {
+            return res.status(400).json({
+                success: false,
+                error: { code: 'INVALID_OTP', message: error.message || 'Invalid or expired email verification code.' },
+            });
+        }
+    }
+    /**
+     * Send Mobile OTP to Authenticated User for Profile Verification
+     * POST /api/auth/profile/send-mobile-otp
+     */
+    static async profileSendMobileOtp(req, res, next) {
+        try {
+            if (!req.user) {
+                return res.status(401).json({ success: false, error: { code: 'AUTH_REQUIRED', message: 'Authentication required' } });
+            }
+            const body = profileSendMobileSchema.parse(req.body || {});
+            const user = await prisma_1.prisma.user.findUnique({ where: { id: req.user.id } });
+            if (!user) {
+                return res.status(404).json({ success: false, error: { code: 'USER_NOT_FOUND', message: 'User not found' } });
+            }
+            const rawPhone = (body.mobile || body.phone || user.phone || '').trim();
+            const { canonical, digits10, isValid } = msg91_service_1.Msg91Service.normalizeIndianMobile(rawPhone);
+            if (!isValid) {
+                return res.status(400).json({
+                    success: false,
+                    error: { code: 'INVALID_PHONE', message: 'Please provide a valid 10-digit Indian mobile number.' },
+                });
+            }
+            // Check if phone belongs to another account
+            if (canonical !== user.phone) {
+                const existing = await prisma_1.prisma.user.findFirst({
+                    where: {
+                        OR: [{ phone: canonical }, { phone: digits10 }, { phone: `91${digits10}` }],
+                        id: { not: user.id },
+                    },
+                });
+                if (existing) {
+                    return res.status(409).json({
+                        success: false,
+                        error: { code: 'PHONE_IN_USE', message: 'This mobile number is already associated with another account.' },
+                    });
+                }
+            }
+            const result = await otp_service_1.OtpService.requestOtp(canonical, 'profile_verification');
+            return res.status(200).json({
+                success: true,
+                message: result.message,
+                data: {
+                    mobile: canonical,
+                    cooldownSeconds: result.cooldownSeconds,
+                    devOtp: result.devOtp,
+                },
+            });
+        }
+        catch (error) {
+            if (error.message?.includes('Too many OTP requests')) {
+                return res.status(429).json({ success: false, error: { code: 'RATE_LIMITED', message: error.message } });
+            }
+            next(error);
+        }
+    }
+    /**
+     * Verify Mobile OTP for Authenticated User Profile
+     * POST /api/auth/profile/verify-mobile-otp
+     */
+    static async profileVerifyMobileOtp(req, res, next) {
+        try {
+            if (!req.user) {
+                return res.status(401).json({ success: false, error: { code: 'AUTH_REQUIRED', message: 'Authentication required' } });
+            }
+            const body = profileVerifyMobileSchema.parse(req.body);
+            const user = await prisma_1.prisma.user.findUnique({
+                where: { id: req.user.id },
+                include: {
+                    roles: { include: { role: true } },
+                    customerProfile: true,
+                    professionalProfile: { include: { creditWallet: true, verification: true } },
+                },
+            });
+            if (!user) {
+                return res.status(404).json({ success: false, error: { code: 'USER_NOT_FOUND', message: 'User not found' } });
+            }
+            const rawPhone = (body.mobile || body.phone || user.phone || '').trim();
+            const { canonical, isValid } = msg91_service_1.Msg91Service.normalizeIndianMobile(rawPhone);
+            if (!isValid) {
+                return res.status(400).json({
+                    success: false,
+                    error: { code: 'INVALID_PHONE', message: 'Please provide a valid 10-digit Indian mobile number.' },
+                });
+            }
+            await otp_service_1.OtpService.verifyOtp(canonical, body.otp, 'profile_verification');
+            const updated = await prisma_1.prisma.user.update({
+                where: { id: user.id },
+                data: {
+                    phone: canonical,
+                    phoneVerifiedAt: new Date(),
+                },
+                include: {
+                    roles: { include: { role: true } },
+                    customerProfile: true,
+                    professionalProfile: { include: { creditWallet: true, verification: true } },
+                },
+            });
+            return res.status(200).json({
+                success: true,
+                message: 'Mobile number verified successfully!',
+                data: {
+                    user: formatUserResponse(updated),
+                },
+            });
+        }
+        catch (error) {
+            return res.status(400).json({
+                success: false,
+                error: { code: 'INVALID_OTP', message: error.message || 'Invalid or expired mobile verification code.' },
+            });
         }
     }
 }

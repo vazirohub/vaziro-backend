@@ -11,6 +11,16 @@ router.post('/resend-otp', AuthController.resendOtp);
 router.post('/verify-otp', AuthController.verifyOtp);
 router.post('/complete-signup', AuthController.completeSignup);
 
+// Dedicated Email OTP Authentication & Verification Routes
+router.post('/send-email-otp', AuthController.sendEmailOtp);
+router.post('/verify-email-otp', AuthController.verifyEmailOtp);
+
+// Authenticated Profile Contact Verification Routes
+router.post('/profile/send-email-otp', authenticate, AuthController.profileSendEmailOtp);
+router.post('/profile/verify-email-otp', authenticate, AuthController.profileVerifyEmailOtp);
+router.post('/profile/send-mobile-otp', authenticate, AuthController.profileSendMobileOtp);
+router.post('/profile/verify-mobile-otp', authenticate, AuthController.profileVerifyMobileOtp);
+
 // Compatibility aliases
 router.post('/otp/request', AuthController.sendOtp);
 router.post('/otp/verify', AuthController.verifyOtp);
