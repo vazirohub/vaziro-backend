@@ -10,6 +10,25 @@ class AISupportService {
      */
     static async handleChatQuery(params) {
         const { message, history = [], userId, userRole = 'CUSTOMER' } = params;
+        const lowerMsg = message.toLowerCase();
+        const isHandoverRequest = lowerMsg.includes('human') ||
+            lowerMsg.includes('real person') ||
+            lowerMsg.includes('agent') ||
+            lowerMsg.includes('executive') ||
+            lowerMsg.includes('transfer') ||
+            lowerMsg.includes('call back') ||
+            lowerMsg.includes('callback') ||
+            lowerMsg.includes('talk to someone') ||
+            lowerMsg.includes('support team') ||
+            lowerMsg.includes('customer care') ||
+            lowerMsg.includes('speak to');
+        if (isHandoverRequest) {
+            return {
+                reply: 'I understand you would like to speak with our human support team. All our executives are currently assisting other members. Please use the form below to request a priority callback, and a specialist will call you back shortly.',
+                isAccountSpecific: false,
+                suggestHandover: true,
+            };
+        }
         const isAccountSpecific = ai_account_tools_service_1.AIAccountToolsService.isAccountSpecificQuery(message);
         // 1. If user asks an account-specific question but is NOT authenticated
         if (isAccountSpecific && !userId) {

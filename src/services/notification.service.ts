@@ -550,6 +550,21 @@ export class NotificationService {
       actionUrl: isProfessional ? '/requirements' : '/dashboard',
       email: user.email ? { to: user.email, subject: title, html } : undefined,
     });
+
+    // Executive broadcast to info@vaziro.in
+    NotificationService.notifyAdminEvent({
+      eventType: 'ACCOUNT_CREATED',
+      title: `New Account Created: ${user.firstName} (${isProfessional ? 'Professional' : 'Customer'})`,
+      message: `A new ${isProfessional ? 'service professional' : 'customer'} has successfully onboarded on Vaziro.`,
+      metadata: [
+        { label: 'Member Name', value: user.firstName },
+        { label: 'Designated Role', value: isProfessional ? 'Professional' : 'Customer' },
+        { label: 'Email Address', value: user.email || 'Pending verification' },
+        { label: 'User ID', value: user.id },
+      ],
+      actionUrl: `${NotificationService.frontendBaseUrl}/admin`,
+      actionText: 'Inspect in Admin Console',
+    }).catch((err) => console.warn('[NotificationService] Admin welcome alert warning:', err?.message));
   }
 
   /**
@@ -670,6 +685,22 @@ export class NotificationService {
         html: profHtml,
       },
     });
+
+    // Executive broadcast to info@vaziro.in
+    NotificationService.notifyAdminEvent({
+      eventType: 'PROFESSIONAL_HIRED',
+      title: `Professional Hired: "${params.requirementTitle}"`,
+      message: `${params.customerName} has confirmed hiring of ${params.professionalName} for "${params.requirementTitle}". Agreed Contract Value: ₹${params.quotationAmount.toLocaleString('en-IN')}.`,
+      metadata: [
+        { label: 'Requirement', value: params.requirementTitle },
+        { label: 'Customer', value: params.customerName },
+        { label: 'Hired Professional', value: params.professionalName },
+        { label: 'Agreed Price', value: `₹${params.quotationAmount.toLocaleString('en-IN')}` },
+        { label: 'Escrow Protection', value: params.paymentSecured ? '100% Secured in Escrow' : 'Direct Booking' },
+      ],
+      actionUrl: `${NotificationService.frontendBaseUrl}/jobs/${params.jobId}`,
+      actionText: 'View Job Record',
+    }).catch((err) => console.warn('[NotificationService] Admin hire alert warning:', err?.message));
   }
 
   /**
@@ -833,6 +864,20 @@ export class NotificationService {
         html: custHtml,
       },
     });
+
+    // Executive broadcast to info@vaziro.in
+    NotificationService.notifyAdminEvent({
+      eventType: 'TRANSACTION',
+      title: `Payment Released: ₹${params.amount.toLocaleString('en-IN')} for "${params.requirementTitle}"`,
+      message: `Escrow payment of ₹${params.amount.toLocaleString('en-IN')} has been disbursed upon milestone completion for "${params.requirementTitle}".`,
+      metadata: [
+        { label: 'Requirement', value: params.requirementTitle },
+        { label: 'Disbursed Amount', value: `₹${params.amount.toLocaleString('en-IN')}` },
+        { label: 'Job ID', value: params.jobId },
+      ],
+      actionUrl: `${NotificationService.frontendBaseUrl}/admin`,
+      actionText: 'Open Admin Ledger',
+    }).catch((err) => console.warn('[NotificationService] Admin payout alert warning:', err?.message));
   }
 
   /**
@@ -973,6 +1018,63 @@ export class NotificationService {
       message,
       actionUrl: '/profile',
       email: user.email ? { to: user.email, subject: title, html } : undefined,
+    });
+  }
+
+  /**
+   * 11. Executive Notification to info@vaziro.in for Critical Platform Events
+   * Dispatches alerts for:
+   * - Account Creation
+   * - Transaction / Payment Verified / Credit Pack Purchased
+   * - Job / Requirement Posted
+   * - Professional Hired
+   * - Dispute Raised
+   */
+  static async notifyAdminEvent(params: {
+    eventType: 'ACCOUNT_CREATED' | 'TRANSACTION' | 'REQUIREMENT_POSTED' | 'PROFESSIONAL_HIRED' | 'DISPUTE';
+    title: string;
+    message: string;
+    metadata?: Array<{ label: string; value: string }>;
+    actionUrl?: string;
+    actionText?: string;
+  }): Promise<void> {
+    const adminEmail = process.env.ADMIN_NOTIFICATION_EMAIL || 'info@vaziro.in';
+    const badgeMap: Record<string, string> = {
+      ACCOUNT_CREATED: '⚡ NEW USER ONBOARDING',
+      TRANSACTION: '💰 PAYMENT & ESCROW TRANSACTION',
+      REQUIREMENT_POSTED: '📋 NEW REQUIREMENT POSTED',
+      PROFESSIONAL_HIRED: '🤝 PROFESSIONAL HIRED',
+      DISPUTE: '⚖️ DISPUTE CASE NOTICE',
+    };
+
+    const actionUrl = params.actionUrl || `${NotificationService.frontendBaseUrl}/admin`;
+    const actionText = params.actionText || 'Open Administration Console';
+
+    const html = NotificationService.generateEmailTemplate({
+      title: params.title,
+      userName: 'Vaziro Administrator',
+      badge: badgeMap[params.eventType] || 'OPERATIONAL ALERT',
+      message: params.message,
+      actionUrl,
+      actionText,
+      metaRows: [
+        ...(params.metadata || []),
+        { label: 'Event Timestamp', value: new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }) + ' IST' },
+      ],
+      subNote: 'This executive notice was dispatched automatically to info@vaziro.in from the Vaziro Core Platform.',
+    });
+
+    // Asynchronously dispatch email without blocking caller
+    setImmediate(async () => {
+      try {
+        await NotificationService.sendEmailViaResend({
+          to: adminEmail,
+          subject: `[Vaziro Alert] ${params.title}`,
+          html,
+        });
+      } catch (err: any) {
+        console.warn(`[NotificationService] notifyAdminEvent failed to send to ${adminEmail}:`, err?.message || err);
+      }
     });
   }
 }

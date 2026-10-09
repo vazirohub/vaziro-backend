@@ -22,6 +22,7 @@ router.use(aiLimiter);
 // 1. AI Support Chat (General + Account-Specific if token present)
 router.post('/chat', optionalAuthenticate, AIController.chat);
 router.post('/support-chat', optionalAuthenticate, AIController.chat);
+router.post('/request-callback', optionalAuthenticate, AIController.requestCallback);
 
 // 2. Natural Language Requirement Extraction
 router.post('/extract-requirement', optionalAuthenticate, AIController.extractRequirement);

@@ -13,7 +13,7 @@ router.post('/verify', auth_middleware_1.authenticate, payments_controller_1.Pay
 router.post('/webhook', payments_controller_1.PaymentsController.handleWebhook);
 router.post('/razorpay/webhook', payments_controller_1.PaymentsController.handleWebhook);
 // Admin Payments Ledger
-router.get('/transactions', auth_middleware_1.authenticate, (0, auth_middleware_1.requireRoles)('ADMIN', 'SUPER_ADMIN'), payments_controller_1.PaymentsController.getTransactions);
+router.get('/transactions', auth_middleware_1.authenticate, (0, auth_middleware_1.requireRoles)('ADMIN', 'SUPER_ADMIN', 'FINANCE'), payments_controller_1.PaymentsController.getTransactions);
 // Escrow Release & Invoicing
 router.post('/:jobId/release', auth_middleware_1.authenticate, payments_controller_1.PaymentsController.releasePayment);
 router.get('/invoice/:jobId', auth_middleware_1.authenticate, payments_controller_1.PaymentsController.getInvoice);

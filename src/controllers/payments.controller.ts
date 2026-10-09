@@ -365,6 +365,22 @@ export class PaymentsController {
         return currentPayment;
       });
 
+      // Executive broadcast to info@vaziro.in
+      NotificationService.notifyAdminEvent({
+        eventType: 'TRANSACTION',
+        title: `Payment Verified: ₹${confirmedPayment.amount.toLocaleString('en-IN')}`,
+        message: `A payment transaction of ₹${confirmedPayment.amount.toLocaleString('en-IN')} has been verified and captured.`,
+        metadata: [
+          { label: 'Amount', value: `₹${confirmedPayment.amount.toLocaleString('en-IN')}` },
+          { label: 'Razorpay Order ID', value: confirmedPayment.orderId || razorpayOrderId },
+          { label: 'Payment ID', value: razorpayPaymentId },
+          { label: 'Payment Status', value: 'CAPTURED' },
+          { label: 'Target Job ID', value: confirmedPayment.jobId || 'N/A' },
+        ],
+        actionUrl: `${process.env.FRONTEND_URL || 'https://vaziro.in'}/admin`,
+        actionText: 'Open Admin Transactions',
+      }).catch((err) => console.warn('[Payments] Admin notification failed:', err?.message));
+
       return res.status(200).json({
         success: true,
         message: 'Payment verified and service activated successfully.',

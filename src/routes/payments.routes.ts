@@ -15,7 +15,7 @@ router.post('/webhook', PaymentsController.handleWebhook);
 router.post('/razorpay/webhook', PaymentsController.handleWebhook);
 
 // Admin Payments Ledger
-router.get('/transactions', authenticate, requireRoles('ADMIN', 'SUPER_ADMIN'), PaymentsController.getTransactions);
+router.get('/transactions', authenticate, requireRoles('ADMIN', 'SUPER_ADMIN', 'FINANCE'), PaymentsController.getTransactions);
 
 // Escrow Release & Invoicing
 router.post('/:jobId/release', authenticate, PaymentsController.releasePayment);

@@ -521,8 +521,8 @@ class ProfessionalsController {
                     error: { message: 'State parameter is required for CSRF and replay validation.' },
                 });
             }
-            // Verify state and extract userId & requestId
-            const { userId, requestId } = apisetu_service_1.ApiSetuService.verifyState(state);
+            // Verify state and extract userId, requestId & codeVerifier
+            const { userId, requestId, codeVerifier } = apisetu_service_1.ApiSetuService.verifyState(state);
             // Prevent cross-user tampering
             if (req.user?.id && req.user.id !== userId) {
                 return res.status(403).json({
@@ -530,7 +530,7 @@ class ProfessionalsController {
                     error: { message: 'Verification state user mismatch.' },
                 });
             }
-            const result = await apisetu_service_1.ApiSetuService.completeVerification(userId, code, requestId);
+            const result = await apisetu_service_1.ApiSetuService.completeVerification(userId, code, requestId, codeVerifier);
             if (result.verificationStatus === 'REVIEW_REQUIRED') {
                 return res.status(200).json({
                     success: true,

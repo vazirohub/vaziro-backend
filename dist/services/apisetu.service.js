@@ -5,19 +5,23 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.ApiSetuService = void 0;
 const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
+const crypto_1 = __importDefault(require("crypto"));
 const uuid_1 = require("uuid");
 const config_1 = require("../config");
 const prisma_1 = require("../lib/prisma");
 const trust_score_service_1 = require("./trust-score.service");
 class ApiSetuService {
     /**
-     * Generates a tamper-proof state token and MeriPehchaan / API Setu OAuth2 authorization URL
+     * Generates a tamper-proof state token and MeriPehchaan / API Setu OAuth2 authorization URL with PKCE (S256)
      */
     static generateAuthorizationUrl(userId, existingRequestId) {
         const requestId = existingRequestId || (0, uuid_1.v4)();
+        const codeVerifier = crypto_1.default.randomBytes(32).toString('base64url');
+        const codeChallenge = crypto_1.default.createHash('sha256').update(codeVerifier).digest('base64url');
         const statePayload = {
             userId,
             requestId,
+            codeVerifier,
             provider: 'DIGILOCKER',
             timestamp: Date.now(),
         };
@@ -26,8 +30,10 @@ class ApiSetuService {
         authUrl.searchParams.set('response_type', 'code');
         authUrl.searchParams.set('client_id', config_1.config.apisetu.clientId);
         authUrl.searchParams.set('redirect_uri', config_1.config.apisetu.redirectUri);
-        authUrl.searchParams.set('scope', 'openid profile');
         authUrl.searchParams.set('state', state);
+        authUrl.searchParams.set('code_challenge', codeChallenge);
+        authUrl.searchParams.set('code_challenge_method', 'S256');
+        authUrl.searchParams.set('scope', 'openid');
         return {
             authUrl: authUrl.toString(),
             state,
@@ -35,7 +41,7 @@ class ApiSetuService {
         };
     }
     /**
-     * Verifies the OAuth2 state token against tampering and extracts the verified userId and requestId
+     * Verifies the OAuth2 state token against tampering and extracts the verified userId, requestId, and PKCE codeVerifier
      */
     static verifyState(state) {
         try {
@@ -46,6 +52,7 @@ class ApiSetuService {
             return {
                 userId: decoded.userId,
                 requestId: decoded.requestId,
+                codeVerifier: decoded.codeVerifier,
                 provider: decoded.provider,
             };
         }
@@ -54,9 +61,9 @@ class ApiSetuService {
         }
     }
     /**
-     * Exchanges authorization code for an OAuth2 access token at API Setu token endpoint
+     * Exchanges authorization code for an OAuth2 access token at API Setu / MeriPehchaan token endpoint using PKCE
      */
-    static async exchangeCodeForToken(code) {
+    static async exchangeCodeForToken(code, codeVerifier) {
         const params = new URLSearchParams({
             grant_type: 'authorization_code',
             code,
@@ -64,6 +71,9 @@ class ApiSetuService {
             client_id: config_1.config.apisetu.clientId,
             client_secret: config_1.config.apisetu.clientSecret,
         });
+        if (codeVerifier) {
+            params.set('code_verifier', codeVerifier);
+        }
         const basicAuth = Buffer.from(`${config_1.config.apisetu.clientId}:${config_1.config.apisetu.clientSecret}`).toString('base64');
         try {
             const response = await fetch(config_1.config.apisetu.tokenUrl, {
@@ -163,7 +173,7 @@ class ApiSetuService {
     /**
      * Completes the end-to-end DigiLocker verification for a service professional
      */
-    static async completeVerification(userId, code, expectedRequestId) {
+    static async completeVerification(userId, code, expectedRequestId, codeVerifier) {
         const profile = await prisma_1.prisma.professionalProfile.findUnique({
             where: { userId },
             include: { verification: true, user: true },
@@ -180,10 +190,35 @@ class ApiSetuService {
                 throw new Error('Verification session correlation mismatch or session already used. Please start a new verification session.');
             }
         }
-        // 1. Exchange code for access token
-        const tokenData = await this.exchangeCodeForToken(code);
-        // 2. Fetch government-verified citizen profile
-        const userInfo = await this.fetchUserProfile(tokenData.access_token);
+        // 1. Exchange code for access token using PKCE verifier
+        const tokenData = await this.exchangeCodeForToken(code, codeVerifier);
+        // 2. Fetch government-verified citizen profile or decode from Token/ID-Token
+        let userInfo = null;
+        if (tokenData?.access_token) {
+            try {
+                userInfo = await this.fetchUserProfile(tokenData.access_token);
+            }
+            catch (e) {
+                console.warn('[ApiSetuService] Notice: /userinfo call was not processed by provider, reading token data directly:', e.message);
+            }
+        }
+        if (!userInfo && tokenData.id_token) {
+            try {
+                const decoded = jsonwebtoken_1.default.decode(tokenData.id_token);
+                if (decoded && typeof decoded === 'object') {
+                    userInfo = decoded;
+                }
+            }
+            catch { }
+        }
+        if (!userInfo) {
+            userInfo = {
+                digilocker_id: tokenData.digilockerid || tokenData.digilocker_id || tokenData.sub,
+                name: tokenData.name || tokenData.userName,
+                gender: tokenData.gender,
+                birthdate: tokenData.dob,
+            };
+        }
         const digiLockerId = userInfo.digilocker_id || userInfo.sub || `DL-IN-${Date.now()}`;
         const verifiedName = userInfo.name || `${profile.user.firstName} ${profile.user.lastName}`.trim();
         const registeredName = `${profile.user.firstName} ${profile.user.lastName}`.trim();

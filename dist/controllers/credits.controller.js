@@ -4,6 +4,7 @@ exports.CreditsController = void 0;
 const prisma_1 = require("../lib/prisma");
 const credit_service_1 = require("../services/credit.service");
 const razorpay_service_1 = require("../services/razorpay.service");
+const notification_service_1 = require("../services/notification.service");
 class CreditsController {
     /**
      * GET /api/v1/credits/wallet
@@ -273,6 +274,22 @@ class CreditsController {
                 razorpayOrderId: orderId,
                 razorpayPaymentId: paymentId,
             });
+            // Executive broadcast to info@vaziro.in
+            const amountPaid = result?.purchase?.amountPaid || 0;
+            const creditsAwarded = result?.purchase?.totalCreditsAwarded || 0;
+            notification_service_1.NotificationService.notifyAdminEvent({
+                eventType: 'TRANSACTION',
+                title: `Credit Pack Purchased: ₹${amountPaid} (${creditsAwarded} Credits)`,
+                message: `A verified professional purchased a credit plan (${creditsAwarded} credits) for ₹${amountPaid}.`,
+                metadata: [
+                    { label: 'Credits Awarded', value: `+${creditsAwarded} Credits` },
+                    { label: 'Amount Paid', value: `₹${amountPaid.toLocaleString('en-IN')}` },
+                    { label: 'Razorpay Order', value: orderId },
+                    { label: 'Payment Ref', value: paymentId },
+                ],
+                actionUrl: `${process.env.FRONTEND_URL || 'https://vaziro.in'}/admin`,
+                actionText: 'View Admin Ledger',
+            }).catch((err) => console.warn('[Credits] Admin notification failed:', err?.message));
             return res.status(200).json({
                 success: true,
                 message: 'Payment verified! Professional plan and credits activated successfully.',

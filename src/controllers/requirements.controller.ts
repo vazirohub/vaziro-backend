@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { prisma } from '../lib/prisma';
 import { CreditService } from '../services/credit.service';
+import { NotificationService } from '../services/notification.service';
 
 export class RequirementsController {
   /**
@@ -238,6 +239,24 @@ export class RequirementsController {
       });
 
       const creditCost = await CreditService.calculateFee(requirement.budgetMin, requirement.budgetMax);
+
+      // Executive broadcast to info@vaziro.in
+      NotificationService.notifyAdminEvent({
+        eventType: 'REQUIREMENT_POSTED',
+        title: `New Requirement Posted: "${requirement.title}"`,
+        message: `A client posted a new service requirement for ${requirement.category?.name || 'General'}.`,
+        metadata: [
+          { label: 'Requirement Title', value: requirement.title },
+          { label: 'Category', value: requirement.category?.name || 'General' },
+          { label: 'Subcategory', value: requirement.subcategory?.name || 'Standard' },
+          { label: 'Budget Range', value: `₹${effectiveMin.toLocaleString('en-IN')} - ₹${effectiveMax.toLocaleString('en-IN')}` },
+          { label: 'City', value: requirement.city?.name || 'All India / Remote' },
+          { label: 'Timeline', value: requirement.timeline || 'ASAP' },
+          { label: 'Requirement ID', value: requirement.id },
+        ],
+        actionUrl: `${process.env.FRONTEND_URL || 'https://vaziro.in'}/requirements/${requirement.id}`,
+        actionText: 'Inspect Requirement',
+      }).catch((err) => console.warn('[Requirements] Admin notification failed:', err?.message));
 
       return res.status(201).json({
         success: true,

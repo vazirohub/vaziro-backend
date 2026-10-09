@@ -11,8 +11,31 @@ export class AISupportService {
     history?: Array<{ role: 'user' | 'model'; text: string }>;
     userId?: string;
     userRole?: string;
-  }): Promise<{ reply: string; isAccountSpecific: boolean; handledOffline?: boolean }> {
+  }): Promise<{ reply: string; isAccountSpecific: boolean; handledOffline?: boolean; suggestHandover?: boolean }> {
     const { message, history = [], userId, userRole = 'CUSTOMER' } = params;
+
+    const lowerMsg = message.toLowerCase();
+    const isHandoverRequest =
+      lowerMsg.includes('human') ||
+      lowerMsg.includes('real person') ||
+      lowerMsg.includes('agent') ||
+      lowerMsg.includes('executive') ||
+      lowerMsg.includes('transfer') ||
+      lowerMsg.includes('call back') ||
+      lowerMsg.includes('callback') ||
+      lowerMsg.includes('talk to someone') ||
+      lowerMsg.includes('support team') ||
+      lowerMsg.includes('customer care') ||
+      lowerMsg.includes('speak to');
+
+    if (isHandoverRequest) {
+      return {
+        reply:
+          'I understand you would like to speak with our human support team. All our executives are currently assisting other members. Please use the form below to request a priority callback, and a specialist will call you back shortly.',
+        isAccountSpecific: false,
+        suggestHandover: true,
+      };
+    }
 
     const isAccountSpecific = AIAccountToolsService.isAccountSpecificQuery(message);
 

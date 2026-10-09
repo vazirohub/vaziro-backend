@@ -575,8 +575,8 @@ export class ProfessionalsController {
         });
       }
 
-      // Verify state and extract userId & requestId
-      const { userId, requestId } = ApiSetuService.verifyState(state);
+      // Verify state and extract userId, requestId & codeVerifier
+      const { userId, requestId, codeVerifier } = ApiSetuService.verifyState(state);
 
       // Prevent cross-user tampering
       if (req.user?.id && req.user.id !== userId) {
@@ -586,7 +586,7 @@ export class ProfessionalsController {
         });
       }
 
-      const result = await ApiSetuService.completeVerification(userId, code, requestId);
+      const result = await ApiSetuService.completeVerification(userId, code, requestId, codeVerifier);
 
       if (result.verificationStatus === 'REVIEW_REQUIRED') {
         return res.status(200).json({

@@ -2,6 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.DisputesController = void 0;
 const prisma_1 = require("../lib/prisma");
+const notification_service_1 = require("../services/notification.service");
 class DisputesController {
     /**
      * POST /api/v1/disputes
@@ -69,6 +70,21 @@ class DisputesController {
                 });
                 return dispute;
             });
+            // Executive broadcast to info@vaziro.in
+            notification_service_1.NotificationService.notifyAdminEvent({
+                eventType: 'DISPUTE',
+                title: `Dispute Case Raised: Job #${job.id.slice(0, 8)}`,
+                message: `A dispute has been submitted for job #${job.id}. Reason: "${reason}". Immediate review recommended.`,
+                metadata: [
+                    { label: 'Dispute ID', value: result.id },
+                    { label: 'Job ID', value: job.id },
+                    { label: 'Reason', value: reason },
+                    { label: 'Disputed Amount', value: `₹${result.amountDisputed.toLocaleString('en-IN')}` },
+                    { label: 'Status', value: 'OPEN' },
+                ],
+                actionUrl: `${process.env.FRONTEND_URL || 'https://vaziro.in'}/admin`,
+                actionText: 'Review Dispute in Admin',
+            }).catch((err) => console.warn('[Disputes] Admin notification failed:', err?.message));
             return res.status(201).json({
                 success: true,
                 message: 'Dispute submitted. A Vaziro Support Specialist will review the case within 24 hours.',

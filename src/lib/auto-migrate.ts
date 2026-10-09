@@ -262,6 +262,24 @@ export async function ensureDatabaseSchema(): Promise<void> {
         UNIQUE(blockerUserId, blockedUserId)
       )`)
     ).catch(() => {});
+
+    // Ensure staff roles exist in Role table
+    const essentialRoles = [
+      { name: 'SUPER_ADMIN', description: 'Executive level system administrator with full access' },
+      { name: 'ADMIN', description: 'Platform operator with catalog and governance access' },
+      { name: 'SUPPORT', description: 'Customer support agent for dispute and chat arbitration' },
+      { name: 'FINANCE', description: 'Finance administrator for payouts, fees, and GST tax auditing' },
+      { name: 'VERIFICATION_ADMIN', description: 'Compliance officer for DigiLocker and KYC verification' },
+    ];
+    for (const r of essentialRoles) {
+      await withTimeout(
+        prisma.role.upsert({
+          where: { name: r.name },
+          update: { description: r.description },
+          create: { name: r.name, description: r.description },
+        })
+      ).catch(() => {});
+    }
   } catch {
     // Fallback: ignore any migration check issues
   }

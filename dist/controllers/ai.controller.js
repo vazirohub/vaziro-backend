@@ -4,6 +4,7 @@ exports.AIController = void 0;
 const gemini_service_1 = require("../services/gemini.service");
 const ai_match_service_1 = require("../services/ai-match.service");
 const ai_support_service_1 = require("../services/ai-support.service");
+const notification_service_1 = require("../services/notification.service");
 class AIController {
     /**
      * POST /api/v1/ai/chat
@@ -189,6 +190,58 @@ class AIController {
             return res.status(500).json({
                 success: false,
                 error: { message: 'AI health check encountered an error.' },
+            });
+        }
+    }
+    /**
+     * POST /api/v1/ai/request-callback
+     * Handover from Isha AI to Human Support Executive.
+     * Logs priority callback ticket and notifies info@vaziro.in immediately.
+     */
+    static async requestCallback(req, res) {
+        try {
+            const user = req.user;
+            const { phone, name, email, notes, transcript } = req.body;
+            const effectivePhone = phone?.trim() || user?.phone || '';
+            const effectiveName = name?.trim() ||
+                (user ? `${user.firstName || ''} ${user.lastName || ''}`.trim() : 'Guest Member');
+            const effectiveEmail = email?.trim() || user?.email || '';
+            if (!effectivePhone && !effectiveEmail) {
+                return res.status(400).json({
+                    success: false,
+                    error: { message: 'Please provide a valid phone number or email for your callback.' },
+                });
+            }
+            // Notify executive inbox info@vaziro.in
+            notification_service_1.NotificationService.notifyAdminEvent({
+                eventType: 'DISPUTE',
+                title: `Priority Support Callback Request: ${effectiveName} (${effectivePhone || effectiveEmail})`,
+                message: `A member has requested a priority callback through Isha Assistant.\n\nMember: ${effectiveName}\nPhone: ${effectivePhone}\nEmail: ${effectiveEmail}\nTopic/Notes: ${notes || 'Human Support Handover'}\n\nRecent Transcript:\n${transcript || 'N/A'}`,
+                metadata: [
+                    { label: 'Member Name', value: effectiveName },
+                    { label: 'Phone Number', value: effectivePhone || 'N/A' },
+                    { label: 'Email Address', value: effectiveEmail || 'N/A' },
+                    { label: 'Topic / Notes', value: notes || 'Human Support Handover' },
+                    { label: 'Channel', value: 'Isha AI Live Handover' },
+                ],
+                actionUrl: `${process.env.FRONTEND_URL || 'https://vaziro.in'}/admin`,
+                actionText: 'Open Admin Console',
+            }).catch((err) => console.warn('[AIController] Callback notification failed:', err?.message));
+            return res.status(200).json({
+                success: true,
+                message: 'All our support executives are currently assisting other members. Your priority callback request has been logged! An executive will call you back shortly.',
+                data: {
+                    phone: effectivePhone,
+                    name: effectiveName,
+                    status: 'LOGGED',
+                },
+            });
+        }
+        catch (error) {
+            console.error('[AIController] requestCallback error:', error.message);
+            return res.status(500).json({
+                success: false,
+                error: { message: 'Failed to log callback request.' },
             });
         }
     }

@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import { prisma } from '../lib/prisma';
+import { NotificationService } from '../services/notification.service';
 
 export class DisputesController {
   /**
@@ -78,6 +79,22 @@ export class DisputesController {
 
         return dispute;
       });
+
+      // Executive broadcast to info@vaziro.in
+      NotificationService.notifyAdminEvent({
+        eventType: 'DISPUTE',
+        title: `Dispute Case Raised: Job #${job.id.slice(0, 8)}`,
+        message: `A dispute has been submitted for job #${job.id}. Reason: "${reason}". Immediate review recommended.`,
+        metadata: [
+          { label: 'Dispute ID', value: result.id },
+          { label: 'Job ID', value: job.id },
+          { label: 'Reason', value: reason },
+          { label: 'Disputed Amount', value: `₹${result.amountDisputed.toLocaleString('en-IN')}` },
+          { label: 'Status', value: 'OPEN' },
+        ],
+        actionUrl: `${process.env.FRONTEND_URL || 'https://vaziro.in'}/admin`,
+        actionText: 'Review Dispute in Admin',
+      }).catch((err) => console.warn('[Disputes] Admin notification failed:', err?.message));
 
       return res.status(201).json({
         success: true,

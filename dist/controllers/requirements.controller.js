@@ -3,6 +3,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.RequirementsController = void 0;
 const prisma_1 = require("../lib/prisma");
 const credit_service_1 = require("../services/credit.service");
+const notification_service_1 = require("../services/notification.service");
 class RequirementsController {
     /**
      * POST /api/v1/requirements
@@ -208,6 +209,23 @@ class RequirementsController {
                 data: { jobsPostedCount: { increment: 1 } },
             });
             const creditCost = await credit_service_1.CreditService.calculateFee(requirement.budgetMin, requirement.budgetMax);
+            // Executive broadcast to info@vaziro.in
+            notification_service_1.NotificationService.notifyAdminEvent({
+                eventType: 'REQUIREMENT_POSTED',
+                title: `New Requirement Posted: "${requirement.title}"`,
+                message: `A client posted a new service requirement for ${requirement.category?.name || 'General'}.`,
+                metadata: [
+                    { label: 'Requirement Title', value: requirement.title },
+                    { label: 'Category', value: requirement.category?.name || 'General' },
+                    { label: 'Subcategory', value: requirement.subcategory?.name || 'Standard' },
+                    { label: 'Budget Range', value: `₹${effectiveMin.toLocaleString('en-IN')} - ₹${effectiveMax.toLocaleString('en-IN')}` },
+                    { label: 'City', value: requirement.city?.name || 'All India / Remote' },
+                    { label: 'Timeline', value: requirement.timeline || 'ASAP' },
+                    { label: 'Requirement ID', value: requirement.id },
+                ],
+                actionUrl: `${process.env.FRONTEND_URL || 'https://vaziro.in'}/requirements/${requirement.id}`,
+                actionText: 'Inspect Requirement',
+            }).catch((err) => console.warn('[Requirements] Admin notification failed:', err?.message));
             return res.status(201).json({
                 success: true,
                 message: 'Requirement posted successfully. Service professionals in your area are being notified.',

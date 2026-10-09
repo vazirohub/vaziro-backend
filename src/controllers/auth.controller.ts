@@ -520,6 +520,13 @@ export class AuthController {
           },
         });
 
+        NotificationService.sendWelcome({
+          id: user.id,
+          email: user.email,
+          firstName: user.firstName,
+          roles: [selectedRole],
+        }).catch((e) => console.warn('[Auth] Welcome notification failed:', e?.message));
+
         return res.status(200).json({
           success: true,
           message: 'Account registered and authenticated successfully.',
@@ -746,6 +753,13 @@ export class AuthController {
           expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
         },
       });
+
+      NotificationService.sendWelcome({
+        id: user.id,
+        email: user.email,
+        firstName: user.firstName,
+        roles: [role],
+      }).catch((e) => console.warn('[Auth] Welcome notification failed:', e?.message));
 
       return res.status(201).json({
         success: true,

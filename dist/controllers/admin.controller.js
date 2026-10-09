@@ -1570,5 +1570,470 @@ class AdminController {
             });
         }
     }
+    // ============================================================================
+    // EMPLOYEE & STAFF GOVERNANCE (ROLES: SUPPORT, FINANCE, VERIFICATION, ADMIN)
+    // ============================================================================
+    /**
+     * GET /api/v1/admin/employees
+     * Returns all staff members who have administrative or operational roles
+     */
+    static async getEmployees(req, res) {
+        try {
+            const staffRoles = ['SUPER_ADMIN', 'ADMIN', 'SUPPORT', 'FINANCE', 'VERIFICATION_ADMIN'];
+            const users = await prisma_1.prisma.user.findMany({
+                where: {
+                    roles: {
+                        some: {
+                            role: {
+                                name: { in: staffRoles },
+                            },
+                        },
+                    },
+                },
+                include: {
+                    roles: {
+                        include: {
+                            role: true,
+                        },
+                    },
+                },
+                orderBy: { createdAt: 'desc' },
+            });
+            const sanitized = users.map((u) => {
+                const roleNames = u.roles.map((r) => r.role.name);
+                const primaryRole = roleNames.find((rn) => staffRoles.includes(rn)) || 'SUPPORT';
+                return {
+                    id: u.id,
+                    firstName: u.firstName,
+                    lastName: u.lastName,
+                    email: u.email,
+                    phone: u.phone,
+                    status: u.status,
+                    roles: roleNames,
+                    role: primaryRole,
+                    emailVerifiedAt: u.emailVerifiedAt,
+                    phoneVerifiedAt: u.phoneVerifiedAt,
+                    createdAt: u.createdAt,
+                    updatedAt: u.updatedAt,
+                };
+            });
+            return res.status(200).json({
+                success: true,
+                data: sanitized,
+            });
+        }
+        catch (error) {
+            return res.status(500).json({
+                success: false,
+                error: { message: error.message || 'Failed to fetch employees' },
+            });
+        }
+    }
+    /**
+     * POST /api/v1/admin/employees
+     * Create a new employee with designated role (SUPPORT, FINANCE, VERIFICATION_ADMIN, ADMIN, SUPER_ADMIN)
+     */
+    static async createEmployee(req, res) {
+        try {
+            const { firstName, lastName, email, phone, role, password } = req.body;
+            if (!firstName || !firstName.trim()) {
+                return res.status(400).json({
+                    success: false,
+                    error: { message: 'First name is required.' },
+                });
+            }
+            if (!email || !email.trim()) {
+                return res.status(400).json({
+                    success: false,
+                    error: { message: 'Work email address is required.' },
+                });
+            }
+            const canonicalEmail = email.trim().toLowerCase();
+            const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+            if (!emailRegex.test(canonicalEmail)) {
+                return res.status(400).json({
+                    success: false,
+                    error: { message: 'Please provide a valid work email address.' },
+                });
+            }
+            const validRoles = ['SUPER_ADMIN', 'ADMIN', 'SUPPORT', 'FINANCE', 'VERIFICATION_ADMIN'];
+            const targetRole = (role || 'SUPPORT').toUpperCase();
+            if (!validRoles.includes(targetRole)) {
+                return res.status(400).json({
+                    success: false,
+                    error: { message: `Invalid staff role. Must be one of: ${validRoles.join(', ')}` },
+                });
+            }
+            if (!password || password.length < 6) {
+                return res.status(400).json({
+                    success: false,
+                    error: { message: 'Password must be at least 6 characters long.' },
+                });
+            }
+            // Check for duplicate email
+            const existingUserByEmail = await prisma_1.prisma.user.findFirst({
+                where: { email: canonicalEmail },
+            });
+            if (existingUserByEmail) {
+                return res.status(409).json({
+                    success: false,
+                    error: { message: 'A user with this email address already exists.' },
+                });
+            }
+            // Format & check phone if provided
+            let canonicalPhone = null;
+            if (phone && phone.trim()) {
+                const digits = phone.replace(/\D/g, '');
+                const last10 = digits.slice(-10);
+                if (last10.length === 10) {
+                    canonicalPhone = `+91${last10}`;
+                    const existingPhone = await prisma_1.prisma.user.findFirst({
+                        where: {
+                            OR: [
+                                { phone: canonicalPhone },
+                                { phone: last10 },
+                                { phone: `91${last10}` },
+                            ],
+                        },
+                    });
+                    if (existingPhone) {
+                        return res.status(409).json({
+                            success: false,
+                            error: { message: 'A user with this phone number already exists.' },
+                        });
+                    }
+                }
+            }
+            // Ensure the Role record exists
+            let roleRecord = await prisma_1.prisma.role.findUnique({
+                where: { name: targetRole },
+            });
+            if (!roleRecord) {
+                roleRecord = await prisma_1.prisma.role.create({
+                    data: {
+                        name: targetRole,
+                        description: `${targetRole} staff role`,
+                    },
+                });
+            }
+            const passwordHash = await bcryptjs_1.default.hash(password, 10);
+            const newUser = await prisma_1.prisma.user.create({
+                data: {
+                    firstName: firstName.trim(),
+                    lastName: (lastName || '').trim(),
+                    email: canonicalEmail,
+                    phone: canonicalPhone,
+                    passwordHash,
+                    status: 'ACTIVE',
+                    emailVerifiedAt: new Date(),
+                    phoneVerifiedAt: canonicalPhone ? new Date() : null,
+                    roles: {
+                        create: {
+                            roleId: roleRecord.id,
+                        },
+                    },
+                },
+                include: {
+                    roles: {
+                        include: {
+                            role: true,
+                        },
+                    },
+                },
+            });
+            return res.status(201).json({
+                success: true,
+                message: `Employee account created successfully with ${targetRole} role.`,
+                data: {
+                    id: newUser.id,
+                    firstName: newUser.firstName,
+                    lastName: newUser.lastName,
+                    email: newUser.email,
+                    phone: newUser.phone,
+                    status: newUser.status,
+                    roles: newUser.roles.map((r) => r.role.name),
+                    role: targetRole,
+                    createdAt: newUser.createdAt,
+                },
+            });
+        }
+        catch (error) {
+            return res.status(500).json({
+                success: false,
+                error: { message: error.message || 'Failed to create employee' },
+            });
+        }
+    }
+    /**
+     * PUT /api/v1/admin/employees/:id
+     * Update an employee's profile details or reassign their staff role
+     */
+    static async updateEmployee(req, res) {
+        try {
+            const { id } = req.params;
+            const { firstName, lastName, email, phone, role, status } = req.body;
+            const user = await prisma_1.prisma.user.findUnique({
+                where: { id },
+                include: { roles: { include: { role: true } } },
+            });
+            if (!user) {
+                return res.status(404).json({
+                    success: false,
+                    error: { message: 'Employee not found.' },
+                });
+            }
+            const updateData = {};
+            if (firstName !== undefined)
+                updateData.firstName = firstName.trim();
+            if (lastName !== undefined)
+                updateData.lastName = (lastName || '').trim();
+            if (status !== undefined)
+                updateData.status = status;
+            if (email !== undefined && email.trim() !== '') {
+                const canonicalEmail = email.trim().toLowerCase();
+                if (canonicalEmail !== user.email) {
+                    const emailCheck = await prisma_1.prisma.user.findFirst({
+                        where: { email: canonicalEmail, id: { not: id } },
+                    });
+                    if (emailCheck) {
+                        return res.status(409).json({
+                            success: false,
+                            error: { message: 'Another user with this email address already exists.' },
+                        });
+                    }
+                    updateData.email = canonicalEmail;
+                }
+            }
+            if (phone !== undefined) {
+                if (!phone.trim()) {
+                    updateData.phone = null;
+                }
+                else {
+                    const digits = phone.replace(/\D/g, '');
+                    const last10 = digits.slice(-10);
+                    if (last10.length === 10) {
+                        const canonicalPhone = `+91${last10}`;
+                        if (canonicalPhone !== user.phone) {
+                            const phoneCheck = await prisma_1.prisma.user.findFirst({
+                                where: {
+                                    id: { not: id },
+                                    OR: [
+                                        { phone: canonicalPhone },
+                                        { phone: last10 },
+                                        { phone: `91${last10}` },
+                                    ],
+                                },
+                            });
+                            if (phoneCheck) {
+                                return res.status(409).json({
+                                    success: false,
+                                    error: { message: 'Another user with this phone number already exists.' },
+                                });
+                            }
+                            updateData.phone = canonicalPhone;
+                        }
+                    }
+                }
+            }
+            // Update user details
+            await prisma_1.prisma.user.update({
+                where: { id },
+                data: updateData,
+            });
+            // Update role if requested
+            if (role) {
+                const validRoles = ['SUPER_ADMIN', 'ADMIN', 'SUPPORT', 'FINANCE', 'VERIFICATION_ADMIN'];
+                const targetRole = role.toUpperCase();
+                if (validRoles.includes(targetRole)) {
+                    let roleRecord = await prisma_1.prisma.role.findUnique({
+                        where: { name: targetRole },
+                    });
+                    if (!roleRecord) {
+                        roleRecord = await prisma_1.prisma.role.create({
+                            data: { name: targetRole, description: `${targetRole} staff role` },
+                        });
+                    }
+                    // Delete existing staff roles for this user
+                    const staffRoleNames = ['SUPER_ADMIN', 'ADMIN', 'SUPPORT', 'FINANCE', 'VERIFICATION_ADMIN'];
+                    const userStaffRoleIds = user.roles
+                        .filter((ur) => staffRoleNames.includes(ur.role.name))
+                        .map((ur) => ur.roleId);
+                    if (userStaffRoleIds.length > 0) {
+                        await prisma_1.prisma.userRole.deleteMany({
+                            where: {
+                                userId: id,
+                                roleId: { in: userStaffRoleIds },
+                            },
+                        });
+                    }
+                    // Connect new role
+                    await prisma_1.prisma.userRole.create({
+                        data: {
+                            userId: id,
+                            roleId: roleRecord.id,
+                        },
+                    });
+                }
+            }
+            const refreshed = await prisma_1.prisma.user.findUnique({
+                where: { id },
+                include: { roles: { include: { role: true } } },
+            });
+            const staffRoleNames = ['SUPER_ADMIN', 'ADMIN', 'SUPPORT', 'FINANCE', 'VERIFICATION_ADMIN'];
+            const refreshedRoles = refreshed.roles.map((r) => r.role.name);
+            const primaryRole = refreshedRoles.find((r) => staffRoleNames.includes(r)) || role || 'SUPPORT';
+            return res.status(200).json({
+                success: true,
+                message: 'Employee updated successfully.',
+                data: {
+                    id: refreshed.id,
+                    firstName: refreshed.firstName,
+                    lastName: refreshed.lastName,
+                    email: refreshed.email,
+                    phone: refreshed.phone,
+                    status: refreshed.status,
+                    roles: refreshedRoles,
+                    role: primaryRole,
+                    updatedAt: refreshed.updatedAt,
+                },
+            });
+        }
+        catch (error) {
+            return res.status(500).json({
+                success: false,
+                error: { message: error.message || 'Failed to update employee' },
+            });
+        }
+    }
+    /**
+     * PATCH /api/v1/admin/employees/:id/status
+     * Activate or suspend an employee
+     */
+    static async updateEmployeeStatus(req, res) {
+        try {
+            const { id } = req.params;
+            const { status } = req.body;
+            if (id === req.user?.id) {
+                return res.status(400).json({
+                    success: false,
+                    error: { message: 'You cannot change your own account status.' },
+                });
+            }
+            const validStatuses = ['ACTIVE', 'INACTIVE', 'SUSPENDED'];
+            if (!validStatuses.includes(status)) {
+                return res.status(400).json({
+                    success: false,
+                    error: { message: `Status must be one of: ${validStatuses.join(', ')}` },
+                });
+            }
+            const updated = await prisma_1.prisma.user.update({
+                where: { id },
+                data: { status },
+            });
+            return res.status(200).json({
+                success: true,
+                message: `Employee status changed to ${status}`,
+                data: updated,
+            });
+        }
+        catch (error) {
+            return res.status(500).json({
+                success: false,
+                error: { message: error.message || 'Failed to update employee status' },
+            });
+        }
+    }
+    /**
+     * POST /api/v1/admin/employees/:id/reset-password
+     * Directly reset an employee's password
+     */
+    static async resetEmployeePassword(req, res) {
+        try {
+            const { id } = req.params;
+            const { newPassword } = req.body;
+            if (!newPassword || newPassword.length < 6) {
+                return res.status(400).json({
+                    success: false,
+                    error: { message: 'Password must be at least 6 characters long.' },
+                });
+            }
+            const passwordHash = await bcryptjs_1.default.hash(newPassword, 10);
+            await prisma_1.prisma.user.update({
+                where: { id },
+                data: { passwordHash },
+            });
+            return res.status(200).json({
+                success: true,
+                message: 'Employee password reset successfully.',
+            });
+        }
+        catch (error) {
+            return res.status(500).json({
+                success: false,
+                error: { message: error.message || 'Failed to reset employee password' },
+            });
+        }
+    }
+    /**
+     * DELETE /api/v1/admin/employees/:id
+     * Revoke employee staff access / remove employee
+     */
+    static async deleteEmployee(req, res) {
+        try {
+            const { id } = req.params;
+            if (id === req.user?.id) {
+                return res.status(400).json({
+                    success: false,
+                    error: { message: 'You cannot delete your own administrator account.' },
+                });
+            }
+            const user = await prisma_1.prisma.user.findUnique({
+                where: { id },
+                include: {
+                    roles: { include: { role: true } },
+                },
+            });
+            if (!user) {
+                return res.status(404).json({
+                    success: false,
+                    error: { message: 'Employee not found.' },
+                });
+            }
+            // Remove staff roles
+            const staffRoleNames = ['SUPER_ADMIN', 'ADMIN', 'SUPPORT', 'FINANCE', 'VERIFICATION_ADMIN'];
+            const staffUserRoles = user.roles.filter((ur) => staffRoleNames.includes(ur.role.name));
+            if (staffUserRoles.length > 0) {
+                await prisma_1.prisma.userRole.deleteMany({
+                    where: {
+                        userId: id,
+                        roleId: { in: staffUserRoles.map((ur) => ur.roleId) },
+                    },
+                });
+            }
+            // If user has no other roles (like CUSTOMER or PROFESSIONAL), safely delete the user record
+            const remainingRoles = await prisma_1.prisma.userRole.count({ where: { userId: id } });
+            if (remainingRoles === 0) {
+                await prisma_1.prisma.user.delete({
+                    where: { id },
+                }).catch(async () => {
+                    // Fallback if foreign key constraints exist: mark as INACTIVE
+                    await prisma_1.prisma.user.update({
+                        where: { id },
+                        data: { status: 'INACTIVE' },
+                    });
+                });
+            }
+            return res.status(200).json({
+                success: true,
+                message: 'Employee removed successfully.',
+            });
+        }
+        catch (error) {
+            return res.status(500).json({
+                success: false,
+                error: { message: error.message || 'Failed to remove employee' },
+            });
+        }
+    }
 }
 exports.AdminController = AdminController;
