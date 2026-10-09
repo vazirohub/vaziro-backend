@@ -10,6 +10,7 @@ const uuid_1 = require("uuid");
 const config_1 = require("../config");
 const prisma_1 = require("../lib/prisma");
 const trust_score_service_1 = require("./trust-score.service");
+const notification_service_1 = require("./notification.service");
 class ApiSetuService {
     /**
      * Generates a tamper-proof state token and MeriPehchaan / API Setu OAuth2 authorization URL with PKCE (S256)
@@ -286,6 +287,25 @@ class ApiSetuService {
         });
         // Automatically recalculate Profile Strength and Trust Score
         await trust_score_service_1.TrustScoreService.recalculate(profile.id).catch(() => { });
+        // Notify administration at info@vaziro.in
+        notification_service_1.NotificationService.notifyAdminEvent({
+            eventType: 'VERIFICATION',
+            title: isMismatch
+                ? `DigiLocker Review Required: ${registeredName}`
+                : `DigiLocker Identity Verified: ${verifiedName}`,
+            message: isMismatch
+                ? `Professional "${registeredName}" completed DigiLocker authentication, but government records returned "${verifiedName}". Manual administrative review is required.`
+                : `Professional "${verifiedName}" (${profile.user?.email || profile.user?.phone || 'Account ID ' + userId}) has verified their identity via DigiLocker (Aadhaar).`,
+            metadata: [
+                { label: 'Professional Name', value: verifiedName },
+                { label: 'Registered Name', value: registeredName },
+                { label: 'DigiLocker ID', value: digiLockerId },
+                { label: 'Name Match Status', value: nameMatchStatus },
+                { label: 'Status', value: targetStatus },
+            ],
+            actionUrl: '/admin',
+            actionText: 'Review Verifications in Admin',
+        }).catch(() => { });
         return {
             verificationStatus: targetStatus,
             badgeText: isMismatch ? 'Review Required' : '✓ Verified via DigiLocker',

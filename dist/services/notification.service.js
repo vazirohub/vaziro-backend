@@ -871,6 +871,7 @@ class NotificationService {
             REQUIREMENT_POSTED: '📋 NEW REQUIREMENT POSTED',
             PROFESSIONAL_HIRED: '🤝 PROFESSIONAL HIRED',
             DISPUTE: '⚖️ DISPUTE CASE NOTICE',
+            VERIFICATION: '🛡️ GOVERNMENT ID VERIFICATION',
         };
         const actionUrl = params.actionUrl || `${NotificationService.frontendBaseUrl}/admin`;
         const actionText = params.actionText || 'Open Administration Console';

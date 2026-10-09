@@ -572,6 +572,21 @@ class PaymentsController {
                             }
                         }
                     });
+                    // Executive alert to info@vaziro.in for webhook-captured payment
+                    notification_service_1.NotificationService.notifyAdminEvent({
+                        eventType: 'TRANSACTION',
+                        title: `Payment Captured (Webhook): ₹${amountInInr.toLocaleString('en-IN')}`,
+                        message: `A payment of ₹${amountInInr.toLocaleString('en-IN')} has been verified and captured via Razorpay webhook. Order ID: ${razorpayOrderId}, Payment ID: ${razorpayPaymentId || 'N/A'}. Method: ${method}.`,
+                        metadata: [
+                            { label: 'Amount', value: `₹${amountInInr.toLocaleString('en-IN')}` },
+                            { label: 'Razorpay Order ID', value: razorpayOrderId || 'N/A' },
+                            { label: 'Razorpay Payment ID', value: razorpayPaymentId || 'N/A' },
+                            { label: 'Payment Method', value: method },
+                            { label: 'Contact', value: paymentEntity?.email || paymentEntity?.contact || 'N/A' },
+                        ],
+                        actionUrl: '/admin',
+                        actionText: 'View in Admin Console',
+                    }).catch(() => { });
                 }
             }
             else if (event === 'payment.failed') {

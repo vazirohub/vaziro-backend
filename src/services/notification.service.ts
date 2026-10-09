@@ -1031,7 +1031,7 @@ export class NotificationService {
    * - Dispute Raised
    */
   static async notifyAdminEvent(params: {
-    eventType: 'ACCOUNT_CREATED' | 'TRANSACTION' | 'REQUIREMENT_POSTED' | 'PROFESSIONAL_HIRED' | 'DISPUTE';
+    eventType: 'ACCOUNT_CREATED' | 'TRANSACTION' | 'REQUIREMENT_POSTED' | 'PROFESSIONAL_HIRED' | 'DISPUTE' | 'VERIFICATION';
     title: string;
     message: string;
     metadata?: Array<{ label: string; value: string }>;
@@ -1045,6 +1045,7 @@ export class NotificationService {
       REQUIREMENT_POSTED: '📋 NEW REQUIREMENT POSTED',
       PROFESSIONAL_HIRED: '🤝 PROFESSIONAL HIRED',
       DISPUTE: '⚖️ DISPUTE CASE NOTICE',
+      VERIFICATION: '🛡️ GOVERNMENT ID VERIFICATION',
     };
 
     const actionUrl = params.actionUrl || `${NotificationService.frontendBaseUrl}/admin`;

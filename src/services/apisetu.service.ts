@@ -4,6 +4,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { config } from '../config';
 import { prisma } from '../lib/prisma';
 import { TrustScoreService } from './trust-score.service';
+import { NotificationService } from './notification.service';
 
 export interface ApiSetuTokenResponse {
   access_token: string;
@@ -369,6 +370,26 @@ export class ApiSetuService {
 
     // Automatically recalculate Profile Strength and Trust Score
     await TrustScoreService.recalculate(profile.id).catch(() => {});
+
+    // Notify administration at info@vaziro.in
+    NotificationService.notifyAdminEvent({
+      eventType: 'VERIFICATION',
+      title: isMismatch
+        ? `DigiLocker Review Required: ${registeredName}`
+        : `DigiLocker Identity Verified: ${verifiedName}`,
+      message: isMismatch
+        ? `Professional "${registeredName}" completed DigiLocker authentication, but government records returned "${verifiedName}". Manual administrative review is required.`
+        : `Professional "${verifiedName}" (${profile.user?.email || profile.user?.phone || 'Account ID ' + userId}) has verified their identity via DigiLocker (Aadhaar).`,
+      metadata: [
+        { label: 'Professional Name', value: verifiedName },
+        { label: 'Registered Name', value: registeredName },
+        { label: 'DigiLocker ID', value: digiLockerId },
+        { label: 'Name Match Status', value: nameMatchStatus },
+        { label: 'Status', value: targetStatus },
+      ],
+      actionUrl: '/admin',
+      actionText: 'Review Verifications in Admin',
+    }).catch(() => {});
 
     return {
       verificationStatus: targetStatus,

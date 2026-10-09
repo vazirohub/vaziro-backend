@@ -89,8 +89,13 @@ class Msg91Service {
                     data: json,
                 };
             }
-            const errorMsg = json?.message || json?.description || 'Failed to dispatch OTP via SMS provider.';
+            let errorMsg = json?.message || json?.description || 'Failed to dispatch OTP via SMS provider.';
             console.warn(`[MSG91] SendOTP provider error response | Code: ${json?.code} | Message: ${errorMsg}`);
+            if (errorMsg.toLowerCase().includes('authentication') ||
+                json?.code === '201' ||
+                json?.code === 201) {
+                errorMsg = 'SMS delivery is temporarily unavailable. Please verify your account using Email OTP.';
+            }
             return {
                 success: false,
                 message: errorMsg,
