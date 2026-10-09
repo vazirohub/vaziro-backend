@@ -313,12 +313,18 @@ export class ApiSetuService {
 
     // 3. Atomically record verification status in database
     await prisma.$transaction(async (tx) => {
+      const detectedDocType =
+        (userInfo as any)?.docType ||
+        (userInfo as any)?.documentType ||
+        (userInfo as any)?.document_type ||
+        'GOVT_ID';
+
       const verData = {
         status: targetStatus,
         provider: 'DIGILOCKER',
         referenceId: digiLockerId,
         verificationReference: digiLockerId,
-        documentType: 'AADHAAR',
+        documentType: detectedDocType,
         nameMatchStatus,
         verifiedAt: isMismatch ? null : verifiedAt,
         failureReason: null,

@@ -58,6 +58,9 @@ class Msg91Service {
         }
         try {
             console.log(`[MSG91] OTP request started | Mobile: ${this.maskMobile(mobile)} | TemplateConfigured: ${Boolean(config_1.config.msg91.templateId)} | SenderConfigured: ${Boolean(config_1.config.msg91.senderId)}`);
+            if (!config_1.config.msg91.templateId || !config_1.config.msg91.templateId.trim()) {
+                console.warn('[MSG91] Notice: MSG91_TEMPLATE_ID is not configured in .env. Telecom operators in India require an approved DLT Template ID for SMS delivery.');
+            }
             const url = new URL('https://control.msg91.com/api/v5/otp');
             if (config_1.config.msg91.templateId && config_1.config.msg91.templateId.trim()) {
                 url.searchParams.append('template_id', config_1.config.msg91.templateId.trim());

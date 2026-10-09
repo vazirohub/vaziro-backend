@@ -73,6 +73,10 @@ export class Msg91Service {
         )} | SenderConfigured: ${Boolean(config.msg91.senderId)}`
       );
 
+      if (!config.msg91.templateId || !config.msg91.templateId.trim()) {
+        console.warn('[MSG91] Notice: MSG91_TEMPLATE_ID is not configured in .env. Telecom operators in India require an approved DLT Template ID for SMS delivery.');
+      }
+
       const url = new URL('https://control.msg91.com/api/v5/otp');
       if (config.msg91.templateId && config.msg91.templateId.trim()) {
         url.searchParams.append('template_id', config.msg91.templateId.trim());
